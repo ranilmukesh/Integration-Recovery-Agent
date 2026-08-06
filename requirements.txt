@@ -1,0 +1,15 @@
+agno[os]
+psycopg[binary]
+python-multipart
+pydantic
+pydantic-settings
+uvicorn[standard]
+websockets
+pytest
+ruff
+python-dotenv
+httpx
+openai
+opentelemetry-api
+opentelemetry-sdk
+openinference-instrumentation-agno
