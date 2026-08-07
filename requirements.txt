@@ -13,3 +13,4 @@ openai
 opentelemetry-api
 opentelemetry-sdk
 openinference-instrumentation-agno
+psycopg-pool

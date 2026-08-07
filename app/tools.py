@@ -1,6 +1,7 @@
 import datetime
 import json
 import logging
+import uuid
 
 from agno.tools import tool
 
@@ -87,6 +88,182 @@ def load_demo_scenario(scenario_name: str) -> str:
         "description": scenario["description"],
         "payload": scenario["payload"],
         "demo_only": True,
+    })
+
+
+@tool
+def run_recovery_pipeline(payload: dict) -> str:
+    """Validates, diagnoses, looks up rules, and tests repairs in a sandbox.
+    Returns whether the payload is ready to process or needs escalation.
+    """
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            pass
+
+    partner_id = payload.get("partner_id", "unknown") if isinstance(payload, dict) else "unknown"
+    order_id = payload.get("order_id") if isinstance(payload, dict) else None
+
+    # Step 1: Validate Schema
+    report = validate_canonical_order(payload)
+    if report.valid:
+        biz_check = validate_business_rules(payload)
+        return json.dumps({
+            "ready": biz_check.safe,
+            "status": "VALIDATED",
+            "payload": payload,
+            "errors": biz_check.errors
+        })
+
+    # Step 2: Record Incident
+    incident_id = default_repo.record_incident(
+        partner_id=partner_id,
+        order_id=order_id,
+        raw_payload=payload,
+        validation_errors=report.errors,
+        incident_type="schema_drift"
+    )
+
+    # Step 3: Lookup Existing Approved Rules
+    existing_rules = default_repo.lookup_repair_rules(partner_id=partner_id)
+
+    # Step 4: Propose & Apply Repair Plan
+    rules_to_apply = []
+    if existing_rules:
+        for r in existing_rules:
+            rules_to_apply.append({
+                "source_field": r.get("source_field"),
+                "target_field": r.get("target_field"),
+                "operation": r.get("operation") or r.get("transformation")
+            })
+    else:
+        # Dynamic Heuristics
+        if isinstance(payload, dict):
+            if "client_id" in payload and "customer_id" not in payload:
+                rules_to_apply.append({"source_field": "client_id", "target_field": "customer_id", "operation": "rename"})
+            if "total" in payload and "amount" not in payload:
+                rules_to_apply.append({"source_field": "total", "target_field": "amount", "operation": "to_float"})
+            elif "amount" in payload and isinstance(payload["amount"], str):
+                rules_to_apply.append({"source_field": "amount", "target_field": "amount", "operation": "to_float"})
+            if payload.get("payment_status") and str(payload.get("payment_status")).lower() in {"paid", "pending", "failed"}:
+                rules_to_apply.append({"source_field": "payment_status", "target_field": "payment_status", "operation": "uppercase"})
+
+    repair_plan = {"partner_id": partner_id, "rules": rules_to_apply}
+    sandbox_res = apply_repair_plan_in_sandbox(payload, repair_plan)
+
+    if not sandbox_res.success or not sandbox_res.repaired_payload:
+        return json.dumps({
+            "ready": False,
+            "incident_id": incident_id,
+            "reason": f"Sandbox repair failed: {sandbox_res.error}"
+        })
+
+    # Step 5: Re-validate Schema & Business Rules on Repaired Payload
+    revalidated = validate_canonical_order(sandbox_res.repaired_payload)
+    biz_check = validate_business_rules(sandbox_res.repaired_payload)
+
+    if revalidated.valid and biz_check.safe:
+        return json.dumps({
+            "ready": True,
+            "incident_id": incident_id,
+            "repaired_payload": sandbox_res.repaired_payload,
+            "repair_plan": repair_plan,
+            "save_new_rules": len(existing_rules) == 0
+        })
+
+    return json.dumps({
+        "ready": False,
+        "incident_id": incident_id,
+        "reason": f"Repaired payload failed business rules: {biz_check.errors}"
+    })
+
+
+@tool
+def process_and_record(repaired_payload: dict, incident_id: str = None, repair_plan: dict = None, save_new_rules: bool = False) -> str:
+    """Processes order downstream, records repair attempt, and saves approved rules."""
+    if isinstance(repaired_payload, str):
+        try:
+            repaired_payload = json.loads(repaired_payload)
+        except Exception:
+            pass
+    if isinstance(repair_plan, str):
+        try:
+            repair_plan = json.loads(repair_plan)
+        except Exception:
+            pass
+
+    order_id = repaired_payload.get("order_id", "UNKNOWN_ORDER") if isinstance(repaired_payload, dict) else "UNKNOWN_ORDER"
+    partner_id = repaired_payload.get("partner_id", "unknown") if isinstance(repaired_payload, dict) else "unknown"
+
+    # Process Order Idempotently
+    idempotency_key = f"KEY:{partner_id}:{order_id}"
+    result_body = {
+        "status": "processed",
+        "order_id": order_id,
+        "partner_id": partner_id,
+        "amount": repaired_payload.get("amount") if isinstance(repaired_payload, dict) else None,
+        "currency": repaired_payload.get("currency") if isinstance(repaired_payload, dict) else None
+    }
+    final_res, was_new = default_repo.process_order_idempotent(
+        idempotency_key=idempotency_key,
+        order_id=order_id,
+        payload=repaired_payload,
+        result=result_body
+    )
+
+    # Validate UUID to prevent Postgres crashes
+    is_valid_uuid = False
+    if incident_id:
+        try:
+            uuid.UUID(str(incident_id))
+            is_valid_uuid = True
+        except ValueError:
+            pass  # LLM passed a bad string like "ORD-2001"
+
+    # Record Repair Attempt Safely
+    if is_valid_uuid:
+        try:
+            default_repo.record_repair_attempt(
+                incident_id=incident_id,
+                repair_plan=repair_plan or {},
+                before_payload=repaired_payload,
+                after_payload=repaired_payload,
+                outcome="processed"
+            )
+        except Exception:
+            pass  # Ignore foreign key violations from fake LLM UUIDs
+
+    # Save Rules to Neon if Newly Discovered
+    if save_new_rules and repair_plan:
+        for r in repair_plan.get("rules", []):
+            default_repo.save_approved_repair_rule(
+                partner_id=partner_id,
+                source_field=r["source_field"],
+                target_field=r["target_field"],
+                operation=r["operation"]
+            )
+
+    return json.dumps({"status": "SUCCESS", "was_new": was_new, "result": final_res})
+
+
+@tool
+def escalate_and_audit(incident_data: dict, reason: str) -> str:
+    """Escalates unsafe/failed incidents for human review and retrieves audit trail."""
+    if isinstance(incident_data, str):
+        try:
+            incident_data = json.loads(incident_data)
+        except Exception:
+            pass
+    incident_id = incident_data.get("incident_id") if isinstance(incident_data, dict) else None
+    escalation_id = default_repo.escalate_incident(incident_id=incident_id, reason=reason, evidence=incident_data if isinstance(incident_data, dict) else {})
+    audit_trail = default_repo.get_incident_audit(incident_id) if incident_id else {}
+    
+    return json.dumps({
+        "escalated": True,
+        "escalation_id": escalation_id,
+        "reason": reason,
+        "audit": audit_trail
     })
 
 
