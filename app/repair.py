@@ -2,6 +2,7 @@ import copy
 from typing import Any
 
 from app.schemas import SandboxResult
+from app.semantica_integration import shared_context
 
 ALLOWED_OPERATIONS = {"rename", "to_float", "uppercase"}
 
@@ -10,6 +11,7 @@ def apply_repair_plan_in_sandbox(payload: dict[str, Any], plan: dict[str, Any]) 
     """Apply a repair plan to a copy of payload in memory (sandbox).
     Does NOT mutate input payload.
     Supports operations: 'rename', 'to_float', 'uppercase'.
+    Generates field-level W3C PROV-O lineage trace using Semantica.
     """
     if not isinstance(payload, dict):
         return SandboxResult(success=False, error="Payload must be a dictionary")
@@ -20,6 +22,16 @@ def apply_repair_plan_in_sandbox(payload: dict[str, Any], plan: dict[str, Any]) 
 
     if not isinstance(rules, list):
         return SandboxResult(success=False, error="Plan rules must be a list")
+
+    order_id = payload.get("order_id", "UNKNOWN_ORDER")
+    partner_id = payload.get("partner_id", "unknown")
+
+    # Track raw input entity lineage in Semantica
+    shared_context.track_payload_entity(
+        entity_id=f"raw_payload:{order_id}",
+        source=f"partner:{partner_id}",
+        metadata={"raw_keys": list(payload.keys())}
+    )
 
     target_fields_populated = set()
 
@@ -69,6 +81,14 @@ def apply_repair_plan_in_sandbox(payload: dict[str, Any], plan: dict[str, Any]) 
                 "target_field": tgt,
                 "operation": op
             })
+
+            # Track transformation relationship lineage in Semantica
+            shared_context.track_transformation(
+                relationship_id=f"transform:{order_id}:{src}->{tgt}",
+                source_rule=f"op:{op}",
+                metadata={"from_value": str(val), "to_value": str(repaired[tgt])}
+            )
+
         except (ValueError, TypeError) as e:
             return SandboxResult(
                 success=False,
@@ -80,3 +100,4 @@ def apply_repair_plan_in_sandbox(payload: dict[str, Any], plan: dict[str, Any]) 
         repaired_payload=repaired,
         applied_rules=applied_rules
     )
+

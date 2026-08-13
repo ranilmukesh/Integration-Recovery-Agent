@@ -13,7 +13,7 @@ class Settings:
         "postgresql+psycopg://postgres:postgres@localhost:5432/integration_recovery_demo"
     )
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
-    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
+    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
     PORT: int = int(os.getenv("PORT", "7860"))
 
 

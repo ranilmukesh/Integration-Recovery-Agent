@@ -7,6 +7,9 @@ from agno.tools import tool
 
 from app.repair import apply_repair_plan_in_sandbox
 from app.repository import Repository
+from app.semantica_integration import (
+    shared_context,
+)
 from app.validators import validate_business_rules, validate_canonical_order
 
 default_repo = Repository()
@@ -520,7 +523,7 @@ def record_incident(incident_data: dict) -> str:
 
 
 def record_repair_attempt(attempt_data: dict) -> str:
-    """Record a repair attempt in Neon linked to an incident."""
+    """Record a repair attempt in Neon linked to an incident and build Causal Decision Graph in Semantica."""
     try:
         if isinstance(attempt_data, str):
             attempt_data = json.loads(attempt_data)
@@ -549,7 +552,43 @@ def record_repair_attempt(attempt_data: dict) -> str:
             processing_result=attempt_data.get("processing_result") if isinstance(attempt_data, dict) else None,
             outcome=outcome
         )
-        res = {"success": True, "attempt_id": attempt_id, "incident_id": incident_id, "stored_outcome": outcome}
+
+        # Semantica Decision Intelligence Graph Creation
+        order_id = attempt_data.get("order_id", "UNKNOWN_ORDER") if isinstance(attempt_data, dict) else "UNKNOWN_ORDER"
+        partner_id = attempt_data.get("partner_id", "unknown") if isinstance(attempt_data, dict) else "unknown"
+
+        repair_decision_id = shared_context.record_decision(
+            category="payment_payload_repair",
+            scenario=f"Schema drift recovery for partner '{partner_id}' on Order '{order_id}'",
+            reasoning=f"Applied transformation rules: {attempt_data.get('repair_plan') if isinstance(attempt_data, dict) else {}}",
+            outcome=outcome,
+            confidence=0.98,
+            metadata={"partner_id": partner_id, "order_id": order_id, "incident_id": incident_id}
+        )
+
+        processing_decision_id = shared_context.record_decision(
+            category="payment_clearing",
+            scenario=f"Clearing order '{order_id}' downstream",
+            reasoning="Passed canonical validation and Rete business safety checks",
+            outcome="cleared" if outcome == "processed" else outcome,
+            confidence=1.0,
+            metadata={"order_id": order_id}
+        )
+
+        shared_context.add_causal_relationship(
+            source_decision_id=repair_decision_id,
+            target_decision_id=processing_decision_id,
+            relationship_type="CAUSED"
+        )
+
+        res = {
+            "success": True,
+            "attempt_id": attempt_id,
+            "incident_id": incident_id,
+            "stored_outcome": outcome,
+            "decision_id": repair_decision_id,
+            "causal_chain_linked": True,
+        }
         if normalized_from:
             res["normalized_from"] = normalized_from
         return json.dumps(res)
@@ -558,7 +597,7 @@ def record_repair_attempt(attempt_data: dict) -> str:
 
 
 def escalate_incident(incident_data: dict, reason: str) -> str:
-    """Flag an incident as escalated for human review when automatic repair is unsafe or ambiguous."""
+    """Flag an incident as escalated for human review and record escalation decision node in Semantica."""
     try:
         if isinstance(incident_data, str):
             incident_data = json.loads(incident_data)
@@ -569,12 +608,24 @@ def escalate_incident(incident_data: dict, reason: str) -> str:
             reason=reason,
             evidence=incident_data if isinstance(incident_data, dict) else {}
         )
+
+        # Record escalation in Semantica Decision Graph
+        esc_decision_id = shared_context.record_decision(
+            category="incident_escalation",
+            scenario=f"Unsafe payload escalated for reason: {reason}",
+            reasoning=reason,
+            outcome="escalated_for_human_review",
+            confidence=1.0,
+            metadata={"incident_id": incident_id, "escalation_id": escalation_id}
+        )
+
         return json.dumps({
             "escalated": True,
             "escalation_id": escalation_id,
             "incident_id": incident_id,
             "reason": reason,
-            "action": "human review required"
+            "action": "human review required",
+            "decision_id": esc_decision_id,
         })
     except Exception as e:
         return json.dumps({"escalated": False, "error": str(e)})

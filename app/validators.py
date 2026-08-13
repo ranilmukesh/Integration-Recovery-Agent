@@ -1,6 +1,7 @@
 from typing import Any
 
 from app.schemas import BusinessResult, ValidationReport
+from app.semantica_integration import shared_context
 
 CANONICAL_FIELDS = {"partner_id", "order_id", "customer_id", "amount", "currency", "payment_status"}
 ALLOWED_CURRENCIES = {"INR", "USD", "EUR", "GBP"}
@@ -58,9 +59,10 @@ def validate_canonical_order(payload: dict[str, Any]) -> ValidationReport:
 
 
 def validate_business_rules(payload: dict[str, Any]) -> BusinessResult:
-    """Validate business safety constraints on canonical payload."""
+    """Validate business safety constraints on canonical payload using Semantica ReteEngine."""
     errors: list[str] = []
 
+    # 1. Canonical Business validation for exact contract compatibility
     if "amount" not in payload:
         errors.append("amount field missing")
     else:
@@ -79,7 +81,15 @@ def validate_business_rules(payload: dict[str, Any]) -> BusinessResult:
     if payment_status not in ALLOWED_PAYMENT_STATUSES:
         errors.append(f"payment_status must be one of {sorted(ALLOWED_PAYMENT_STATUSES)}")
 
+    # 2. Rete Engine Policy Rule evaluation for governance traceability
+    rete_result = shared_context.validate_policy_rules(payload)
+    if not rete_result.get("compliant", False):
+        for v in rete_result.get("violations", []):
+            if v not in errors:
+                errors.append(v)
+
     return BusinessResult(safe=len(errors) == 0, errors=errors)
+
 
 
 def make_idempotency_key(partner_id: str, order_id: str) -> str:

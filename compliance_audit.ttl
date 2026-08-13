@@ -1,0 +1,48 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix semantica: <https://semantica.dev/ns#> .
+
+<d2c77e01-cf6f-421b-ae4c-b25cff13f5e0> a <decision> ;
+    semantica:text "Unsafe payload escalated for reason: amount must be greater than zero" ;
+    semantica:confidence 1.0 .
+
+<category_incident_escalation> a <category> ;
+    semantica:text "category_incident_escalation" ;
+    semantica:confidence 1.0 .
+
+<79b53389-a949-403f-a6aa-ddaf20e47b71> a <decision> ;
+    semantica:text "Schema drift recovery for partner 'partner-acme' on Order 'ORD-TEST'" ;
+    semantica:confidence 1.0 .
+
+<category_payment_payload_repair> a <category> ;
+    semantica:text "category_payment_payload_repair" ;
+    semantica:confidence 1.0 .
+
+<1359391f-eb71-4e75-a4e4-041dd1c7de55> a <decision> ;
+    semantica:text "Clearing order 'ORD-TEST' downstream" ;
+    semantica:confidence 1.0 .
+
+<category_payment_clearing> a <category> ;
+    semantica:text "category_payment_clearing" ;
+    semantica:confidence 1.0 .
+
+<fcf9ec77-82e3-4def-9c38-23b1ebf912e3> a <decision> ;
+    semantica:text "Schema drift recovery for partner 'partner-acme' on Order 'ORD-9005'" ;
+    semantica:confidence 1.0 .
+
+<a05118ef-25aa-4aea-acde-cf4d3d1d9376> a <decision> ;
+    semantica:text "Clearing order 'ORD-9005' downstream" ;
+    semantica:confidence 1.0 .
+
+<92b963f4-ad13-4ccb-8a51-a813d0801eb2> a <decision> ;
+    semantica:text "Unsafe payload escalated for reason: Negative amount detected" ;
+    semantica:confidence 1.0 .
+
+<d2c77e01-cf6f-421b-ae4c-b25cff13f5e0> <belongs_to> <category_incident_escalation> .
+<79b53389-a949-403f-a6aa-ddaf20e47b71> <belongs_to> <category_payment_payload_repair> .
+<1359391f-eb71-4e75-a4e4-041dd1c7de55> <belongs_to> <category_payment_clearing> .
+<79b53389-a949-403f-a6aa-ddaf20e47b71> <CAUSED> <1359391f-eb71-4e75-a4e4-041dd1c7de55> .
+<fcf9ec77-82e3-4def-9c38-23b1ebf912e3> <belongs_to> <category_payment_payload_repair> .
+<a05118ef-25aa-4aea-acde-cf4d3d1d9376> <belongs_to> <category_payment_clearing> .
+<fcf9ec77-82e3-4def-9c38-23b1ebf912e3> <CAUSED> <a05118ef-25aa-4aea-acde-cf4d3d1d9376> .
+<92b963f4-ad13-4ccb-8a51-a813d0801eb2> <belongs_to> <category_incident_escalation> .
