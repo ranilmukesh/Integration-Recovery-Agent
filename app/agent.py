@@ -1,23 +1,21 @@
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, LearningMode, UserMemoryConfig, UserProfileConfig
 from agno.models.nvidia import Nvidia
+from agno.team import Team, TeamMode
 from agno.tracing import setup_tracing
 
 from app.config import settings
+from app.semantica_integration import (
+    evaluate_rete_policy_guardrail,
+    export_compliance_audit,
+    query_knowledge_graph_precedents,
+    shared_context,
+)
 from app.tools import (
-    apply_repair_in_sandbox,
-    escalate_incident,
-    get_incident_audit,
+    escalate_and_audit,
     load_demo_scenario,
-    lookup_repair_rules,
-    process_order,
-    propose_repair,
-    record_incident,
-    record_repair_attempt,
-    save_approved_repair_rule,
-    validate_business_rules_tool,
-    validate_order_payload,
+    process_and_record,
+    run_recovery_pipeline,
 )
 
 # Initialize database storage for Agno sessions, history, and traces
@@ -34,100 +32,135 @@ else:
     db = None
     traces_db = None
 
-# Configure Learning Machine
-if db:
-    learning = LearningMachine(
-        db=db,
-        user_profile=UserProfileConfig(mode=LearningMode.ALWAYS),
-        user_memory=UserMemoryConfig(mode=LearningMode.ALWAYS),
-    )
-else:
-    learning = None
+# Learning set to None to prevent background LLM extraction quota burn for JSON transactional operations
+learning = None
 
 # Initialize LLM model provider
 if settings.NVIDIA_API_KEY:
     model = Nvidia(
         id=settings.NVIDIA_MODEL,
-        api_key=settings.NVIDIA_API_KEY
+        api_key=settings.NVIDIA_API_KEY,
+        max_tokens=2048,
     )
 else:
-    model = Nvidia(id="nvidia/nemotron-3-ultra-550b-a55b")
+    model = Nvidia(
+        id="nvidia/nemotron-3.5-lightning-30b-a3b",
+        max_tokens=2048,
+    )
 
-# Build Integration Recovery Agent
-agent = Agent(
-    id="integration-recovery-agent",
-    name="Integration Recovery Agent",
+# Bind Semantica Shared Context to the recovery agent session using serializable state
+shared_context.bind_agent("b2b-payment-recovery")
+context_session_state = {"semantica_context_id": "b2b-payment-recovery"}
+
+
+# ==========================================
+# 1. Diagnostic Agent
+# ==========================================
+diagnostic_agent = Agent(
+    id="diagnostic-agent",
+    name="Payment Schema Diagnostic Agent",
     model=model,
     db=db,
+    session_state=context_session_state,
     tools=[
         load_demo_scenario,
-        validate_order_payload,
-        lookup_repair_rules,
-        propose_repair,
-        apply_repair_in_sandbox,
-        validate_business_rules_tool,
-        process_order,
-        save_approved_repair_rule,
-        record_incident,
-        record_repair_attempt,
-        escalate_incident,
-        get_incident_audit,
+        query_knowledge_graph_precedents,
+        run_recovery_pipeline,
     ],
-    add_history_to_context=True,
-    num_history_runs=3,
-    stream_events=True,
-    update_memory_on_run=False,
-    enable_session_summaries=False,
-    learning=learning,
     markdown=True,
-    retries=1,
-    delay_between_retries=10,
-    exponential_backoff=True,
-    debug_mode=True,
+    add_history_to_context=False, # Safety Guard: Prevents context inflation
+    retries=0,                    # Safety Guard: Prevents infinite retry loops
+    tool_call_limit=3,            # Hard Cap: Prevents infinite tool-calling loops
     instructions=[
-        "You are the Integration Recovery Agent.",
+        "## Role and Purpose",
+        "You are the Payment Schema Diagnostic Agent. Your exclusive mission is to intercept malformed B2B payloads, diagnose schema drift, and secure a sandboxed repair plan.",
         "",
-        "Single-Pass Execution Rules:",
-        "1. Execute the recovery workflow ONCE per user request. Do NOT reload a scenario or call load_demo_scenario more than once.",
-        "2. Do NOT retry or re-invoke tools that have already returned success.",
-        "3. Once process_order or escalate_incident succeeds and record_repair_attempt is called, provide the final concise summary and STOP immediately.",
+        "## Core Directives & Execution Loop",
+        "1. **Load/Intercept:** If a scenario name is provided, use `load_demo_scenario` to fetch the raw payload.",
+        "2. **Precedent Search:** Execute `query_knowledge_graph_precedents` using the scenario description to discover historically safe mappings.",
+        "3. **Sandbox Healing:** Execute `run_recovery_pipeline` to test your repair plan. This tool validates the schema and generates a deterministic repair.",
         "",
-        "Tool Calling & Data Formatting Rules:",
-        "1. Pass all payloads, rules, and data to tools as NATIVE dictionaries/JSON objects. Do NOT use stringified JSON.",
-        "2. If a tool call returns a syntax or formatting error, STOP and fix the structure. Do not blindly retry the same bad call.",
-        "3. If you receive a rate limit or resource exhausted error, STOP immediately and inform the user. Do not retry.",
-        "",
-        "Demo mode:",
-        "If the user asks to demonstrate, simulate, show, or run a scenario without providing a payload, call load_demo_scenario first.",
-        "Never invent a demonstration payload when a named scenario can be loaded.",
-        "After loading a demo scenario, execute the exact production recovery pipeline.",
-        "Demo fixtures are not production orders, but all validation, repair, business-rule, idempotency, audit, and escalation rules still apply.",
-        "",
-        "Always validate the incoming order before processing it.",
-        "The canonical fields are partner_id, order_id, customer_id, amount, currency, and payment_status.",
-        "Partner aliases are invalid until repaired and revalidated.",
-        "",
-        "For a validation failure:",
-        "1. Record the incident using record_incident.",
-        "2. Search Neon for approved repair rules for this partner using lookup_repair_rules.",
-        "3. If approved rules exist or if repair can be proposed using propose_repair, apply it in sandbox using apply_repair_in_sandbox.",
-        "4. Revalidate the repaired payload with validate_order_payload.",
-        "5. Validate business rules with validate_business_rules_tool.",
-        "6. Process only after all checks pass using process_order.",
-        "7. Record the repair attempt with record_repair_attempt.",
-        "8. Save new rules using save_approved_repair_rule ONLY after successful sandbox validation and successful processing if rules were newly created.",
-        "9. Retrieve the audit trail using get_incident_audit.",
-        "",
-        "Do not call process_order until validate_order_payload and validate_business_rules_tool both return success.",
-        "Never process an order with amount <= 0.",
-        "Never process a duplicate order without idempotency verification.",
-        "Never invent unsupported transformations.",
-        "Never claim success unless the processing tool returned success.",
-        "Escalate ambiguity, unsafe amounts, unsupported values, failed retries, and duplicate conflicts using escalate_incident.",
-        "",
-        "After every tool call, briefly state the current business stage.",
-        "Use these stage labels when appropriate: RECEIVED, VALIDATING, DIAGNOSING, LOOKING_UP_RULES, REPAIRING_IN_SANDBOX, VERIFYING, PROCESSING, LEARNED, ESCALATED, COMPLETE.",
-        "At the end, provide a compact summary containing scenario, outcome, rules used, processing result, and escalation status.",
-        "Use concise business-friendly explanations rather than exposing raw JSON unless requested."
+        "## Strict Handoff Contract",
+        "- **STOP** immediately after `run_recovery_pipeline` returns success.",
+        "- Do NOT attempt to evaluate business policies. Do NOT attempt to process the order.",
+        "- Output the exact `repaired_payload` JSON and `incident_id` directly to the Orchestrator so it can be passed to Compliance."
     ],
 )
+
+
+# ==========================================
+# 2. Compliance Agent
+# ==========================================
+compliance_agent = Agent(
+    id="compliance-agent",
+    name="Financial Policy & Compliance Agent",
+    model=model,
+    db=db,
+    session_state=context_session_state,
+    tools=[
+        evaluate_rete_policy_guardrail,
+        export_compliance_audit,
+        escalate_and_audit,
+        process_and_record,
+    ],
+    markdown=True,
+    add_history_to_context=False, # Safety Guard: Prevents context inflation
+    retries=0,                    # Safety Guard: Prevents infinite retry loops
+    tool_call_limit=3,            # Hard Cap: Prevents infinite tool-calling loops
+    instructions=[
+        "## Role and Purpose",
+        "You are the Financial Policy & Compliance Agent. You act as the absolute regulatory gatekeeper. Your mission is to evaluate healed payloads against deterministic ReteEngine rules and generate W3C PROV-O audit trails.",
+        "",
+        "## Core Directives & Execution Loop",
+        "1. **Policy Evaluation:** Upon receiving a repaired payload from the Orchestrator, immediately execute `evaluate_rete_policy_guardrail`.",
+        "2. **Conditional Routing:**",
+        "   - IF the ReteEngine returns COMPLIANT (safe): Execute `process_and_record` to clear the transaction.",
+        "   - IF the ReteEngine returns VIOLATIONS (unsafe): Execute `escalate_and_audit` immediately. Do not attempt to force a bypass.",
+        "3. **Audit Generation:** Regardless of success or escalation, you MUST execute `export_compliance_audit` to write the semantic decision trail to disk.",
+        "",
+        "## Strict Handoff Contract",
+        "- Never override a ReteEngine failure.",
+        "- Return the final transaction status (Processed or Escalated), the transaction ID, and the audit export path back to the Orchestrator."
+    ],
+)
+
+
+# ==========================================
+# 3. Swarm Orchestrator (Team)
+# ==========================================
+recovery_team = Team(
+    id="b2b-payment-recovery-team",
+    name="B2B Payment Recovery Team",
+    mode=TeamMode.coordinate,
+    model=model,
+    db=db,
+    members=[diagnostic_agent, compliance_agent],
+    session_state=context_session_state,
+    add_history_to_context=False, # Safety Guard: Prevents context inflation
+    retries=0,                    # Safety Guard: Prevents infinite retry loops
+    tool_call_limit=4,            # Hard Cap: 2 member delegations + summary
+    markdown=True,
+    debug_mode=False,
+    instructions=[
+        "## MISSION",
+        "You are the Swarm Orchestrator. Route data flawlessly between your specialized agents and synthesize the final outcome.",
+        "",
+        "## RIGID SWARM PROTOCOL",
+        "1. **Diagnosis:** Delegate the user's initial request to the `diagnostic-agent`. WAIT for it to finish.",
+        "2. **Compliance Handoff:** Extract the `repaired_payload` and `incident_id` returned by the Diagnostic Agent. Delegate a NEW task to the `compliance-agent`, embedding that payload.",
+        "3. **Executive Synthesis:** Once the Compliance Agent completes, YOU MUST STOP DELEGATING. Look at the JSON data and tool responses you have already received, and write the final report yourself.",
+        "",
+        "## STRICT CONSTRAINTS (ANTI-LOOP)",
+        "- NEVER delegate to the `diagnostic-agent` to ask for descriptions, summaries, or explanations. Read the JSON it returned and write the summary yourself.",
+        "- You have a strict limit of 2 delegations total per user request (1 to Diagnostic, 1 to Compliance).",
+        "",
+        "## OUTPUT FORMAT",
+        "### 🛡️ Autonomous Recovery Report",
+        "**Final Status:** [Processed | Escalated]",
+        "**Diagnostic Findings:** [You write a 1 sentence summary of what was fixed based on the JSON differences]",
+        "**Compliance & Audit:** [Pass/Fail] | [Audit Export Status]"
+    ],
+)
+
+# Backwards compatibility alias
+agent = recovery_team

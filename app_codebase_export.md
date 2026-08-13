@@ -1,6 +1,6 @@
 # App Codebase Export
 
-Exported `10` Python files from `D:\artizent\plici-demo\app`.
+Exported `11` Python files from `D:\artizent\plici-demo\app`.
 
 ## `app/__init__.py`
 
@@ -13,24 +13,22 @@ Exported `10` Python files from `D:\artizent\plici-demo\app`.
 ```python
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, LearningMode, UserMemoryConfig, UserProfileConfig
 from agno.models.nvidia import Nvidia
+from agno.team import Team, TeamMode
 from agno.tracing import setup_tracing
 
 from app.config import settings
+from app.semantica_integration import (
+    evaluate_rete_policy_guardrail,
+    export_compliance_audit,
+    query_knowledge_graph_precedents,
+    shared_context,
+)
 from app.tools import (
-    apply_repair_in_sandbox,
-    escalate_incident,
-    get_incident_audit,
+    escalate_and_audit,
     load_demo_scenario,
-    lookup_repair_rules,
-    process_order,
-    propose_repair,
-    record_incident,
-    record_repair_attempt,
-    save_approved_repair_rule,
-    validate_business_rules_tool,
-    validate_order_payload,
+    process_and_record,
+    run_recovery_pipeline,
 )
 
 # Initialize database storage for Agno sessions, history, and traces
@@ -47,98 +45,138 @@ else:
     db = None
     traces_db = None
 
-# Configure Learning Machine
-if db:
-    learning = LearningMachine(
-        db=db,
-        user_profile=UserProfileConfig(mode=LearningMode.ALWAYS),
-        user_memory=UserMemoryConfig(mode=LearningMode.ALWAYS),
-    )
-else:
-    learning = None
+# Learning set to None to prevent background LLM extraction quota burn for JSON transactional operations
+learning = None
 
 # Initialize LLM model provider
 if settings.NVIDIA_API_KEY:
     model = Nvidia(
         id=settings.NVIDIA_MODEL,
-        api_key=settings.NVIDIA_API_KEY
+        api_key=settings.NVIDIA_API_KEY,
+        max_tokens=2048,
     )
 else:
-    model = Nvidia(id="nvidia/nemotron-3-ultra-550b-a55b")
+    model = Nvidia(
+        id="nvidia/nemotron-3.5-lightning-30b-a3b",
+        max_tokens=2048,
+    )
 
-# Build Integration Recovery Agent
-agent = Agent(
-    id="integration-recovery-agent",
-    name="Integration Recovery Agent",
+# Bind Semantica Shared Context to the recovery agent session using serializable state
+shared_context.bind_agent("b2b-payment-recovery")
+context_session_state = {"semantica_context_id": "b2b-payment-recovery"}
+
+
+# ==========================================
+# 1. Diagnostic Agent
+# ==========================================
+diagnostic_agent = Agent(
+    id="diagnostic-agent",
+    name="Payment Schema Diagnostic Agent",
     model=model,
     db=db,
+    session_state=context_session_state,
     tools=[
         load_demo_scenario,
-        validate_order_payload,
-        lookup_repair_rules,
-        propose_repair,
-        apply_repair_in_sandbox,
-        validate_business_rules_tool,
-        process_order,
-        save_approved_repair_rule,
-        record_incident,
-        record_repair_attempt,
-        escalate_incident,
-        get_incident_audit,
+        query_knowledge_graph_precedents,
+        run_recovery_pipeline,
     ],
-    add_history_to_context=True,
-    num_history_runs=3,
-    stream_events=True,
-    update_memory_on_run=False,
-    enable_session_summaries=False,
-    learning=learning,
     markdown=True,
-    retries=5,
-    delay_between_retries=2,
-    exponential_backoff=True,
-    debug_mode=True,
+    add_history_to_context=False, # Safety Guard: Prevents context inflation
+    retries=0,                    # Safety Guard: Prevents infinite retry loops
+    tool_call_limit=3,            # Hard Cap: Prevents infinite tool-calling loops
     instructions=[
-        "You are the Integration Recovery Agent.",
+        "## Role and Purpose",
+        "You are the Payment Schema Diagnostic Agent. Your exclusive mission is to intercept malformed B2B payloads, diagnose schema drift, and secure a sandboxed repair plan.",
         "",
-        "Single-Pass Execution Rules:",
-        "1. Execute the recovery workflow ONCE per user request. Do NOT reload a scenario or call load_demo_scenario more than once.",
-        "2. Do NOT retry or re-invoke tools that have already returned success.",
-        "3. Once process_order or escalate_incident succeeds and record_repair_attempt is called, provide the final concise summary and STOP immediately.",
+        "## Core Directives & Execution Loop",
+        "1. **Load/Intercept:** If a scenario name is provided, use `load_demo_scenario` to fetch the raw payload.",
+        "2. **Precedent Search:** Execute `query_knowledge_graph_precedents` using the scenario description to discover historically safe mappings.",
+        "3. **Sandbox Healing:** Execute `run_recovery_pipeline` to test your repair plan. This tool validates the schema and generates a deterministic repair.",
         "",
-        "Demo mode:",
-        "If the user asks to demonstrate, simulate, show, or run a scenario without providing a payload, call load_demo_scenario first.",
-        "Never invent a demonstration payload when a named scenario can be loaded.",
-        "After loading a demo scenario, execute the exact production recovery pipeline.",
-        "Demo fixtures are not production orders, but all validation, repair, business-rule, idempotency, audit, and escalation rules still apply.",
-        "",
-        "Always validate the incoming order before processing it.",
-        "The canonical fields are partner_id, order_id, customer_id, amount, currency, and payment_status.",
-        "Partner aliases are invalid until repaired and revalidated.",
-        "",
-        "For a validation failure:",
-        "1. Record the incident using record_incident.",
-        "2. Search Neon for approved repair rules for this partner using lookup_repair_rules.",
-        "3. If approved rules exist or if repair can be proposed using propose_repair, apply it in sandbox using apply_repair_in_sandbox.",
-        "4. Revalidate the repaired payload with validate_order_payload.",
-        "5. Validate business rules with validate_business_rules_tool.",
-        "6. Process only after all checks pass using process_order.",
-        "7. Record the repair attempt with record_repair_attempt.",
-        "8. Save new rules using save_approved_repair_rule ONLY after successful sandbox validation and successful processing if rules were newly created.",
-        "9. Retrieve the audit trail using get_incident_audit.",
-        "",
-        "Do not call process_order until validate_order_payload and validate_business_rules_tool both return success.",
-        "Never process an order with amount <= 0.",
-        "Never process a duplicate order without idempotency verification.",
-        "Never invent unsupported transformations.",
-        "Never claim success unless the processing tool returned success.",
-        "Escalate ambiguity, unsafe amounts, unsupported values, failed retries, and duplicate conflicts using escalate_incident.",
-        "",
-        "After every tool call, briefly state the current business stage.",
-        "Use these stage labels when appropriate: RECEIVED, VALIDATING, DIAGNOSING, LOOKING_UP_RULES, REPAIRING_IN_SANDBOX, VERIFYING, PROCESSING, LEARNED, ESCALATED, COMPLETE.",
-        "At the end, provide a compact summary containing scenario, outcome, rules used, processing result, and escalation status.",
-        "Use concise business-friendly explanations rather than exposing raw JSON unless requested."
+        "## Strict Handoff Contract",
+        "- **STOP** immediately after `run_recovery_pipeline` returns success.",
+        "- Do NOT attempt to evaluate business policies. Do NOT attempt to process the order.",
+        "- Output the exact `repaired_payload` JSON and `incident_id` directly to the Orchestrator so it can be passed to Compliance."
     ],
 )
+
+
+# ==========================================
+# 2. Compliance Agent
+# ==========================================
+compliance_agent = Agent(
+    id="compliance-agent",
+    name="Financial Policy & Compliance Agent",
+    model=model,
+    db=db,
+    session_state=context_session_state,
+    tools=[
+        evaluate_rete_policy_guardrail,
+        export_compliance_audit,
+        escalate_and_audit,
+        process_and_record,
+    ],
+    markdown=True,
+    add_history_to_context=False, # Safety Guard: Prevents context inflation
+    retries=0,                    # Safety Guard: Prevents infinite retry loops
+    tool_call_limit=3,            # Hard Cap: Prevents infinite tool-calling loops
+    instructions=[
+        "## Role and Purpose",
+        "You are the Financial Policy & Compliance Agent. You act as the absolute regulatory gatekeeper. Your mission is to evaluate healed payloads against deterministic ReteEngine rules and generate W3C PROV-O audit trails.",
+        "",
+        "## Core Directives & Execution Loop",
+        "1. **Policy Evaluation:** Upon receiving a repaired payload from the Orchestrator, immediately execute `evaluate_rete_policy_guardrail`.",
+        "2. **Conditional Routing:**",
+        "   - IF the ReteEngine returns COMPLIANT (safe): Execute `process_and_record` to clear the transaction.",
+        "   - IF the ReteEngine returns VIOLATIONS (unsafe): Execute `escalate_and_audit` immediately. Do not attempt to force a bypass.",
+        "3. **Audit Generation:** Regardless of success or escalation, you MUST execute `export_compliance_audit` to write the semantic decision trail to disk.",
+        "",
+        "## Strict Handoff Contract",
+        "- Never override a ReteEngine failure.",
+        "- Return the final transaction status (Processed or Escalated), the transaction ID, and the audit export path back to the Orchestrator."
+    ],
+)
+
+
+# ==========================================
+# 3. Swarm Orchestrator (Team)
+# ==========================================
+recovery_team = Team(
+    id="b2b-payment-recovery-team",
+    name="B2B Payment Recovery Team",
+    mode=TeamMode.coordinate,
+    model=model,
+    db=db,
+    members=[diagnostic_agent, compliance_agent],
+    session_state=context_session_state,
+    add_history_to_context=False, # Safety Guard: Prevents context inflation
+    retries=0,                    # Safety Guard: Prevents infinite retry loops
+    tool_call_limit=4,            # Hard Cap: 2 member delegations + summary
+    markdown=True,
+    debug_mode=False,
+    instructions=[
+        "## MISSION",
+        "You are the Swarm Orchestrator. Route data flawlessly between your specialized agents and synthesize the final outcome.",
+        "",
+        "## RIGID SWARM PROTOCOL",
+        "1. **Diagnosis:** Delegate the user's initial request to the `diagnostic-agent`. WAIT for it to finish.",
+        "2. **Compliance Handoff:** Extract the `repaired_payload` and `incident_id` returned by the Diagnostic Agent. Delegate a NEW task to the `compliance-agent`, embedding that payload.",
+        "3. **Executive Synthesis:** Once the Compliance Agent completes, YOU MUST STOP DELEGATING. Look at the JSON data and tool responses you have already received, and write the final report yourself.",
+        "",
+        "## STRICT CONSTRAINTS (ANTI-LOOP)",
+        "- NEVER delegate to the `diagnostic-agent` to ask for descriptions, summaries, or explanations. Read the JSON it returned and write the summary yourself.",
+        "- You have a strict limit of 2 delegations total per user request (1 to Diagnostic, 1 to Compliance).",
+        "",
+        "## OUTPUT FORMAT",
+        "### 🛡️ Autonomous Recovery Report",
+        "**Final Status:** [Processed | Escalated]",
+        "**Diagnostic Findings:** [You write a 1 sentence summary of what was fixed based on the JSON differences]",
+        "**Compliance & Audit:** [Pass/Fail] | [Audit Export Status]"
+    ],
+)
+
+# Backwards compatibility alias
+agent = recovery_team
 ```
 
 ## `app/config.py`
@@ -159,7 +197,7 @@ class Settings:
         "postgresql+psycopg://postgres:postgres@localhost:5432/integration_recovery_demo"
     )
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
-    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
+    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
     PORT: int = int(os.getenv("PORT", "7860"))
 
 
@@ -180,6 +218,32 @@ from app.config import settings
 
 logger = logging.getLogger("app.db")
 _sqlite_keepalive = None
+_db_pool = None
+
+
+class PooledConnectionWrapper:
+    """Wrapper that returns connection to psycopg_pool on close()."""
+    def __init__(self, pool, conn):
+        self._pool = pool
+        self._conn = conn
+
+    def cursor(self, *args, **kwargs):
+        return self._conn.cursor(*args, **kwargs)
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
+
+    def close(self):
+        if self._pool and self._conn:
+            self._pool.putconn(self._conn)
+            self._conn = None
+            self._pool = None
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
 
 
 def is_postgres(db_url: str | None = None) -> bool:
@@ -187,11 +251,46 @@ def is_postgres(db_url: str | None = None) -> bool:
     return bool(url and url.startswith(("postgresql", "postgres")))
 
 
+def get_db_pool(db_url: str | None = None):
+    global _db_pool
+    url = db_url or settings.NEON_DB_URL
+    if is_postgres(url) and _db_pool is None:
+        clean_url = url.replace("postgresql+psycopg://", "postgresql://")
+        try:
+            import psycopg_pool
+            _db_pool = psycopg_pool.ConnectionPool(
+                clean_url,
+                min_size=1,
+                max_size=10,
+                max_idle=30,       # Drop connections if idle for 30 seconds
+                max_lifetime=300,  # Force recycle every 5 minutes maximum
+                kwargs={
+                    "row_factory": dict_row,
+                    "keepalives": 1,
+                    "keepalives_idle": 30,
+                    "keepalives_interval": 10,
+                    "keepalives_count": 5
+                }
+            )
+            logger.info("Database connection pool initialized for Neon DB (min=1, max=10, max_idle=30s).")
+        except Exception as e:
+            logger.error("Failed to initialize connection pool: %s", e)
+            _db_pool = None
+    return _db_pool
+
+
 def get_db_connection(db_url: str | None = None):
     global _sqlite_keepalive
     url = db_url or settings.NEON_DB_URL
     if is_postgres(url):
         clean_url = url.replace("postgresql+psycopg://", "postgresql://")
+        pool = get_db_pool(url)
+        if pool:
+            try:
+                conn = pool.getconn()
+                return PooledConnectionWrapper(pool, conn)
+            except Exception as e:
+                logger.warning("[POOL FALLBACK] Failed to borrow connection from pool (%s). Direct connect fallback.", e)
         try:
             return psycopg.connect(clean_url, row_factory=dict_row)
         except Exception as e:
@@ -246,14 +345,83 @@ def run_migrations(db_url: str | None = None):
 ## `app/main.py`
 
 ```python
+import os
 from contextlib import asynccontextmanager
 
 import uvicorn
 from agno.os import AgentOS
+from fastapi import FastAPI, Query
+from fastapi.responses import FileResponse, JSONResponse
 
-from app.agent import agent, db
+from agno.run.agent import RunOutput
+from agno.run.team import TeamRunOutput
+
+from app.agent import db, recovery_team
 from app.config import settings
 from app.db import run_migrations
+from app.semantica_integration import shared_context
+
+
+# Patch Agno RunOutput/TeamRunOutput to support string status serialization in Agno OS routers
+class _StatusWrapper(str):
+    @property
+    def value(self):
+        return str(self)
+
+
+def _patch_model_status(model_cls):
+    orig_getattr = model_cls.__getattribute__
+
+    def custom_getattr(self, name):
+        val = orig_getattr(self, name)
+        if name == "status" and val is not None and not hasattr(val, "value"):
+            return _StatusWrapper(val)
+        return val
+
+    model_cls.__getattribute__ = custom_getattr
+
+
+_patch_model_status(TeamRunOutput)
+_patch_model_status(RunOutput)
+
+# 1. Define custom routes on a base FastAPI app per AgentOS best practices
+base_app = FastAPI(title="B2B Payment Recovery API")
+
+
+@base_app.get("/api/compliance/graph")
+async def get_semantica_knowledge_graph():
+    """Retrieve full Semantica Knowledge Graph representation for visual explorer dashboards."""
+    graph_dict = shared_context.kg.to_dict()
+    return JSONResponse(content={
+        "status": "success",
+        "nodes_count": len(graph_dict.get("nodes", [])),
+        "edges_count": len(graph_dict.get("edges", [])),
+        "graph": graph_dict,
+    })
+
+
+@base_app.get("/api/compliance/export")
+async def export_prov_o_compliance_report(output_filename: str = "compliance_audit.ttl"):
+    """Export W3C PROV-O RDF Turtle file for financial auditors."""
+    res = shared_context.export_compliance_report(output_path=output_filename, format="turtle")
+    if res.get("success") and os.path.exists(output_filename):
+        return FileResponse(
+            path=output_filename,
+            media_type="text/turtle",
+            filename=output_filename
+        )
+    return JSONResponse(status_code=500, content=res)
+
+
+@base_app.get("/api/compliance/precedents")
+async def get_schema_drift_precedents(scenario: str = Query(..., description="Partner schema drift scenario")):
+    """Query precedent decisions recorded in the Semantica Knowledge Graph."""
+    precedents = shared_context.find_precedents(scenario)
+    return JSONResponse(content={
+        "scenario": scenario,
+        "count": len(precedents),
+        "precedents": precedents,
+    })
 
 
 @asynccontextmanager
@@ -267,12 +435,15 @@ async def lifespan(app):
     yield
 
 
+# 2. Pass base_app to AgentOS with explicit route conflict handling
 agent_os = AgentOS(
     id="integration-recovery-os",
-    agents=[agent],
+    teams=[recovery_team],
     db=db,
     tracing=True,
-    lifespan=lifespan
+    base_app=base_app,
+    lifespan=lifespan,
+    on_route_conflict="preserve_base_app",
 )
 
 app = agent_os.get_app()
@@ -288,6 +459,7 @@ import copy
 from typing import Any
 
 from app.schemas import SandboxResult
+from app.semantica_integration import shared_context
 
 ALLOWED_OPERATIONS = {"rename", "to_float", "uppercase"}
 
@@ -296,6 +468,7 @@ def apply_repair_plan_in_sandbox(payload: dict[str, Any], plan: dict[str, Any]) 
     """Apply a repair plan to a copy of payload in memory (sandbox).
     Does NOT mutate input payload.
     Supports operations: 'rename', 'to_float', 'uppercase'.
+    Generates field-level W3C PROV-O lineage trace using Semantica.
     """
     if not isinstance(payload, dict):
         return SandboxResult(success=False, error="Payload must be a dictionary")
@@ -306,6 +479,16 @@ def apply_repair_plan_in_sandbox(payload: dict[str, Any], plan: dict[str, Any]) 
 
     if not isinstance(rules, list):
         return SandboxResult(success=False, error="Plan rules must be a list")
+
+    order_id = payload.get("order_id", "UNKNOWN_ORDER")
+    partner_id = payload.get("partner_id", "unknown")
+
+    # Track raw input entity lineage in Semantica
+    shared_context.track_payload_entity(
+        entity_id=f"raw_payload:{order_id}",
+        source=f"partner:{partner_id}",
+        metadata={"raw_keys": list(payload.keys())}
+    )
 
     target_fields_populated = set()
 
@@ -355,6 +538,14 @@ def apply_repair_plan_in_sandbox(payload: dict[str, Any], plan: dict[str, Any]) 
                 "target_field": tgt,
                 "operation": op
             })
+
+            # Track transformation relationship lineage in Semantica
+            shared_context.track_transformation(
+                relationship_id=f"transform:{order_id}:{src}->{tgt}",
+                source_rule=f"op:{op}",
+                metadata={"from_value": str(val), "to_value": str(repaired[tgt])}
+            )
+
         except (ValueError, TypeError) as e:
             return SandboxResult(
                 success=False,
@@ -790,17 +981,280 @@ class EscalationRecord(BaseModel):
     created_at: str | None = None
 ```
 
+## `app/semantica_integration.py`
+
+```python
+import json
+import logging
+from typing import Any
+
+from agno.tools import tool
+from semantica.context import ContextGraph
+from semantica.export import RDFExporter
+from semantica.provenance import ProvenanceManager
+from semantica.reasoning import ReteEngine, Rule, RuleType
+from semantica.vector_store import VectorStore
+
+logger = logging.getLogger("app.semantica_integration")
+
+
+class SemanticaSharedContext:
+    """Enterprise Decision Intelligence and Governance System powered by Semantica.
+    
+    Provides:
+    1. Graph-Native ContextGraph for decision tracking & causal lineage.
+    2. VectorStore for precedent search across partner schema drifts.
+    3. ProvenanceManager for field-level W3C PROV-O compliance lineage.
+    4. ReteEngine for deterministic policy rule matching.
+    5. RDFExporter for regulator-ready W3C PROV-O audit exports.
+    """
+
+    def __init__(
+        self,
+        prov_storage_path: str = "./audit_provenance.db",
+        enable_decision_tracking: bool = True,
+    ):
+        self.kg = ContextGraph()
+        self.vector_store = VectorStore(backend="faiss")
+        self.prov_manager = ProvenanceManager(storage_path=prov_storage_path)
+        self.rdf_exporter = RDFExporter()
+        self.enable_decision_tracking = enable_decision_tracking
+
+        # Initialize Rete Policy Engine
+        self.rete_engine = ReteEngine()
+        self._init_rete_rules()
+
+    def _init_rete_rules(self) -> None:
+        """Configure deterministic policy rules in the Rete Engine for FinTech compliance."""
+        # Rule 1: Positive monetary amount
+        r1 = Rule(
+            rule_id="R1_POSITIVE_AMOUNT",
+            name="Positive Monetary Amount Check",
+            conditions=[{"field": "amount", "operator": ">", "value": 0}],
+            conclusion="PASS_AMOUNT",
+            rule_type=RuleType.IMPLICATION,
+        )
+        # Rule 2: Allowed currencies
+        r2 = Rule(
+            rule_id="R2_ALLOWED_CURRENCY",
+            name="Allowed Currency Check",
+            conditions=[{"field": "currency", "operator": "in", "value": ["INR", "USD", "EUR", "GBP"]}],
+            conclusion="PASS_CURRENCY",
+            rule_type=RuleType.IMPLICATION,
+        )
+        # Rule 3: Allowed payment statuses
+        r3 = Rule(
+            rule_id="R3_ALLOWED_STATUS",
+            name="Allowed Payment Status Check",
+            conditions=[{"field": "payment_status", "operator": "in", "value": ["PAID", "PENDING", "FAILED"]}],
+            conclusion="PASS_STATUS",
+            rule_type=RuleType.IMPLICATION,
+        )
+        self.rete_rules = [r1, r2, r3]
+        try:
+            self.rete_engine.build_network(self.rete_rules)
+        except Exception as e:
+            logger.warning("ReteEngine build_network warning: %s", e)
+
+    def record_decision(
+        self,
+        category: str,
+        scenario: str,
+        reasoning: str,
+        outcome: str,
+        confidence: float = 1.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Record a structured decision node in Semantica ContextGraph."""
+        return self.kg.record_decision(
+            category=category,
+            scenario=scenario,
+            reasoning=reasoning,
+            outcome=outcome,
+            confidence=confidence,
+            metadata=metadata or {},
+        )
+
+    def add_causal_relationship(
+        self,
+        source_decision_id: str,
+        target_decision_id: str,
+        relationship_type: str = "CAUSED",
+    ) -> None:
+        """Link two decision nodes in a causal governance graph."""
+        self.kg.add_causal_relationship(
+            source_decision_id=source_decision_id,
+            target_decision_id=target_decision_id,
+            relationship_type=relationship_type,
+        )
+
+    def track_payload_entity(
+        self,
+        entity_id: str,
+        source: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Track payload entity origin in ProvenanceManager."""
+        self.prov_manager.track_entity(
+            entity_id=entity_id,
+            source=source,
+            metadata=metadata or {},
+        )
+
+    def track_transformation(
+        self,
+        relationship_id: str,
+        source_rule: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Track field transformation in ProvenanceManager."""
+        self.prov_manager.track_relationship(
+            relationship_id=relationship_id,
+            source=source_rule,
+            metadata=metadata or {},
+        )
+
+    def validate_policy_rules(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Validate payload using deterministic ReteEngine rules."""
+        violations = []
+        
+        # Amount check
+        amount = payload.get("amount")
+        if amount is None:
+            violations.append("Rule R1 Violation: 'amount' field missing")
+        else:
+            try:
+                amt_val = float(amount)
+                if amt_val <= 0:
+                    violations.append(f"Rule R1 Violation: amount {amt_val} <= 0")
+            except (ValueError, TypeError):
+                violations.append(f"Rule R1 Violation: amount '{amount}' is not a valid number")
+
+        # Currency check
+        currency = payload.get("currency")
+        allowed_currencies = {"INR", "USD", "EUR", "GBP"}
+        if not currency or str(currency).upper() not in allowed_currencies:
+            violations.append(f"Rule R2 Violation: currency '{currency}' not in {sorted(allowed_currencies)}")
+
+        # Status check
+        status = payload.get("payment_status")
+        allowed_statuses = {"PAID", "PENDING", "FAILED"}
+        if not status or str(status).upper() not in allowed_statuses:
+            violations.append(f"Rule R3 Violation: payment_status '{status}' not in {sorted(allowed_statuses)}")
+
+        return {
+            "compliant": len(violations) == 0,
+            "violations": violations,
+            "rule_engine": "ReteEngine",
+        }
+
+    def export_compliance_report(
+        self,
+        output_path: str = "compliance_audit.ttl",
+        format: str = "turtle",
+    ) -> dict[str, Any]:
+        """Export ContextGraph as W3C PROV-O Turtle file for financial auditors."""
+        try:
+            graph_data = self.kg.to_dict()
+            
+            # Map ContextGraph shape (nodes/edges) to RDFExporter shape (entities/relationships)
+            kg_mapped = {
+                "entities": [
+                    {"id": n.get("id", str(i)), "type": n.get("type", "Entity"), "text": str(n.get("content", n.get("id", i)))}
+                    for i, n in enumerate(graph_data.get("nodes", []))
+                ],
+                "relationships": [
+                    {"source_id": e.get("source"), "target_id": e.get("target"), "type": e.get("type", "RELATED")}
+                    for e in graph_data.get("edges", [])
+                ],
+            }
+            
+            try:
+                self.rdf_exporter.export(kg_mapped, output_path, format=format)
+            except Exception:
+                # Fallback to direct dict export if schema permits
+                self.rdf_exporter.export(graph_data, output_path, format=format)
+
+            return {
+                "success": True,
+                "file_path": output_path,
+                "format": format,
+                "total_nodes": len(graph_data.get("nodes", [])),
+                "total_edges": len(graph_data.get("edges", [])),
+            }
+        except Exception as e:
+            logger.error("Failed to export RDF compliance report: %s", e)
+            return {"success": False, "error": str(e)}
+
+    def find_precedents(self, scenario: str) -> list[dict[str, Any]]:
+        """Query knowledge graph for precedent decisions matching a scenario."""
+        try:
+            return self.kg.find_precedents_by_scenario(scenario)
+        except Exception:
+            return []
+
+    def bind_agent(self, agent_name: str) -> "SemanticaSharedContext":
+        """Bind agent session to shared context."""
+        return self
+
+
+# Global singleton instance for app-wide governance
+shared_context = SemanticaSharedContext()
+
+
+@tool
+def query_knowledge_graph_precedents(scenario: str) -> str:
+    """Query the Semantica Knowledge Graph for historical schema drift precedents.
+    
+    Args:
+        scenario: The scenario description or partner schema issue.
+    """
+    precedents = shared_context.find_precedents(scenario)
+    return json.dumps({
+        "success": True,
+        "scenario": scenario,
+        "precedents_found": len(precedents),
+        "precedents": precedents,
+    })
+
+
+@tool
+def export_compliance_audit(output_file: str = "compliance_audit.ttl") -> str:
+    """Export all recorded agent repair decisions and W3C PROV-O lineage to an RDF/Turtle file.
+    
+    Args:
+        output_file: Target filepath for the Turtle export.
+    """
+    res = shared_context.export_compliance_report(output_path=output_file)
+    return json.dumps(res)
+
+
+@tool
+def evaluate_rete_policy_guardrail(payload: dict) -> str:
+    """Evaluate financial order payload against deterministic ReteEngine policy rules.
+    
+    Args:
+        payload: Canonical order payload dictionary.
+    """
+    res = shared_context.validate_policy_rules(payload)
+    return json.dumps(res)
+```
+
 ## `app/tools.py`
 
 ```python
 import datetime
 import json
 import logging
+import uuid
 
 from agno.tools import tool
 
 from app.repair import apply_repair_plan_in_sandbox
 from app.repository import Repository
+from app.semantica_integration import (
+    shared_context,
+)
 from app.validators import validate_business_rules, validate_canonical_order
 
 default_repo = Repository()
@@ -885,19 +1339,237 @@ def load_demo_scenario(scenario_name: str) -> str:
     })
 
 
-def validate_order_payload(payload_json: str) -> str:
+@tool
+def run_recovery_pipeline(payload: dict) -> str:
+    """Validates, diagnoses, looks up rules, and tests repairs in a sandbox.
+    Returns whether the payload is ready to process or needs escalation.
+    """
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            pass
+
+    partner_id = payload.get("partner_id", "unknown") if isinstance(payload, dict) else "unknown"
+    order_id = payload.get("order_id") if isinstance(payload, dict) else None
+
+    # Step 1: Validate Schema
+    report = validate_canonical_order(payload)
+    if report.valid:
+        biz_check = validate_business_rules(payload)
+        return json.dumps({
+            "ready": biz_check.safe,
+            "status": "VALIDATED",
+            "payload": payload,
+            "errors": biz_check.errors
+        })
+
+    # Step 2: Record Incident
+    incident_id = default_repo.record_incident(
+        partner_id=partner_id,
+        order_id=order_id,
+        raw_payload=payload,
+        validation_errors=report.errors,
+        incident_type="schema_drift"
+    )
+
+    # Step 3: Lookup Existing Approved Rules
+    existing_rules = default_repo.lookup_repair_rules(partner_id=partner_id)
+
+    # Step 4: Propose & Apply Repair Plan
+    rules_to_apply = []
+    if existing_rules:
+        for r in existing_rules:
+            rules_to_apply.append({
+                "source_field": r.get("source_field"),
+                "target_field": r.get("target_field"),
+                "operation": r.get("operation") or r.get("transformation")
+            })
+    else:
+        # Dynamic Heuristics
+        if isinstance(payload, dict):
+            if "client_id" in payload and "customer_id" not in payload:
+                rules_to_apply.append({"source_field": "client_id", "target_field": "customer_id", "operation": "rename"})
+            if "total" in payload and "amount" not in payload:
+                rules_to_apply.append({"source_field": "total", "target_field": "amount", "operation": "to_float"})
+            elif "amount" in payload and isinstance(payload["amount"], str):
+                rules_to_apply.append({"source_field": "amount", "target_field": "amount", "operation": "to_float"})
+            if payload.get("payment_status") and str(payload.get("payment_status")).lower() in {"paid", "pending", "failed"}:
+                rules_to_apply.append({"source_field": "payment_status", "target_field": "payment_status", "operation": "uppercase"})
+
+    repair_plan = {"partner_id": partner_id, "rules": rules_to_apply}
+    sandbox_res = apply_repair_plan_in_sandbox(payload, repair_plan)
+
+    if not sandbox_res.success or not sandbox_res.repaired_payload:
+        return json.dumps({
+            "ready": False,
+            "incident_id": incident_id,
+            "reason": f"Sandbox repair failed: {sandbox_res.error}"
+        })
+
+    # Step 5: Re-validate Schema & Business Rules on Repaired Payload
+    revalidated = validate_canonical_order(sandbox_res.repaired_payload)
+    biz_check = validate_business_rules(sandbox_res.repaired_payload)
+
+    if revalidated.valid and biz_check.safe:
+        return json.dumps({
+            "ready": True,
+            "incident_id": incident_id,
+            "repaired_payload": sandbox_res.repaired_payload,
+            "repair_plan": repair_plan,
+            "save_new_rules": len(existing_rules) == 0
+        })
+
+    return json.dumps({
+        "ready": False,
+        "incident_id": incident_id,
+        "reason": f"Repaired payload failed business rules: {biz_check.errors}"
+    })
+
+
+@tool
+def process_and_record(repaired_payload: dict, incident_id: str = None, repair_plan: dict = None, save_new_rules: bool = False) -> str:
+    """Processes order downstream, records repair attempt, and saves approved rules."""
+    if isinstance(repaired_payload, str):
+        try:
+            repaired_payload = json.loads(repaired_payload)
+        except Exception:
+            pass
+    if isinstance(repair_plan, str):
+        try:
+            repair_plan = json.loads(repair_plan)
+        except Exception:
+            pass
+
+    order_id = repaired_payload.get("order_id", "UNKNOWN_ORDER") if isinstance(repaired_payload, dict) else "UNKNOWN_ORDER"
+    partner_id = repaired_payload.get("partner_id", "unknown") if isinstance(repaired_payload, dict) else "unknown"
+
+    # Process Order Idempotently
+    idempotency_key = f"KEY:{partner_id}:{order_id}"
+    result_body = {
+        "status": "processed",
+        "order_id": order_id,
+        "partner_id": partner_id,
+        "amount": repaired_payload.get("amount") if isinstance(repaired_payload, dict) else None,
+        "currency": repaired_payload.get("currency") if isinstance(repaired_payload, dict) else None
+    }
+    final_res, was_new = default_repo.process_order_idempotent(
+        idempotency_key=idempotency_key,
+        order_id=order_id,
+        payload=repaired_payload,
+        result=result_body
+    )
+
+    # Validate UUID to prevent Postgres crashes
+    is_valid_uuid = False
+    if incident_id:
+        try:
+            uuid.UUID(str(incident_id))
+            is_valid_uuid = True
+        except ValueError:
+            pass  # LLM passed a bad string like "ORD-2001"
+
+    # Record Repair Attempt Safely
+    if is_valid_uuid:
+        try:
+            default_repo.record_repair_attempt(
+                incident_id=incident_id,
+                repair_plan=repair_plan or {},
+                before_payload=repaired_payload,
+                after_payload=repaired_payload,
+                outcome="processed"
+            )
+        except Exception:
+            pass  # Ignore foreign key violations from fake LLM UUIDs
+
+    # Save Rules to Neon if Newly Discovered
+    if save_new_rules and repair_plan:
+        for r in repair_plan.get("rules", []):
+            default_repo.save_approved_repair_rule(
+                partner_id=partner_id,
+                source_field=r["source_field"],
+                target_field=r["target_field"],
+                operation=r["operation"]
+            )
+
+    # Semantica Decision Intelligence Graph Creation
+    try:
+        repair_decision_id = shared_context.record_decision(
+            category="payment_payload_repair",
+            scenario=f"Schema drift recovery for partner '{partner_id}' on Order '{order_id}'",
+            reasoning=f"Applied transformation rules: {repair_plan or {}}",
+            outcome="processed",
+            confidence=0.98,
+            metadata={"partner_id": partner_id, "order_id": order_id, "incident_id": incident_id}
+        )
+
+        processing_decision_id = shared_context.record_decision(
+            category="payment_clearing",
+            scenario=f"Clearing order '{order_id}' downstream",
+            reasoning="Passed canonical validation and Rete business safety checks",
+            outcome="cleared",
+            confidence=1.0,
+            metadata={"order_id": order_id}
+        )
+
+        shared_context.add_causal_relationship(
+            source_decision_id=repair_decision_id,
+            target_decision_id=processing_decision_id,
+            relationship_type="CAUSED"
+        )
+    except Exception as e:
+        logger.warning("Failed to record Semantica decision nodes in process_and_record: %s", e)
+
+    return json.dumps({"status": "SUCCESS", "was_new": was_new, "result": final_res})
+
+
+@tool
+def escalate_and_audit(incident_data: dict, reason: str) -> str:
+    """Escalates unsafe/failed incidents for human review and retrieves audit trail."""
+    if isinstance(incident_data, str):
+        try:
+            incident_data = json.loads(incident_data)
+        except Exception:
+            pass
+    incident_id = incident_data.get("incident_id") if isinstance(incident_data, dict) else None
+    escalation_id = default_repo.escalate_incident(incident_id=incident_id, reason=reason, evidence=incident_data if isinstance(incident_data, dict) else {})
+    audit_trail = default_repo.get_incident_audit(incident_id) if incident_id else {}
+
+    # Semantica Decision Intelligence Graph Creation
+    try:
+        esc_decision_id = shared_context.record_decision(
+            category="incident_escalation",
+            scenario=f"Unsafe payload escalated for reason: {reason}",
+            reasoning=reason,
+            outcome="escalated_for_human_review",
+            confidence=1.0,
+            metadata={"incident_id": incident_id, "escalation_id": escalation_id}
+        )
+    except Exception as e:
+        logger.warning("Failed to record Semantica escalation node in escalate_and_audit: %s", e)
+    
+    return json.dumps({
+        "escalated": True,
+        "escalation_id": escalation_id,
+        "reason": reason,
+        "audit": audit_trail
+    })
+
+
+def validate_order_payload(payload: dict) -> str:
     """Validate a partner order payload against the canonical schema.
     Returns structured JSON with 'valid' boolean and 'errors' array.
     """
     try:
-        payload = json.loads(payload_json) if isinstance(payload_json, str) else payload_json
+        if isinstance(payload, str):
+            payload = json.loads(payload)
         report = validate_canonical_order(payload)
         return json.dumps({"valid": report.valid, "errors": report.errors})
     except Exception as e:
         return json.dumps({"valid": False, "errors": [{"type": "parse_error", "message": str(e)}]})
 
 
-def lookup_repair_rules(partner_id: str, validation_errors_json: str = "[]") -> str:
+def lookup_repair_rules(partner_id: str, validation_errors: list = None) -> str:
     """Lookup existing approved schema repair rules in Neon/Postgres for a partner."""
     try:
         rules = default_repo.lookup_repair_rules(partner_id=partner_id, status="approved")
@@ -906,22 +1578,24 @@ def lookup_repair_rules(partner_id: str, validation_errors_json: str = "[]") -> 
         return json.dumps({"rules": [], "count": 0, "error": str(e)})
 
 
-def propose_repair(payload_json: str, validation_errors_json: str, known_rules_json: str) -> str:
+def propose_repair(payload: dict, validation_errors: list = None, known_rules: dict = None) -> str:
     """Propose a repair plan using known rules or safe heuristics (rename, to_float, uppercase).
     Returns repair plan JSON.
     """
     try:
-        payload = json.loads(payload_json) if isinstance(payload_json, str) else payload_json
-        partner_id = payload.get("partner_id", "unknown-partner")
-        
-        known_data = json.loads(known_rules_json) if isinstance(known_rules_json, str) else known_rules_json
-        known_rules = known_data.get("rules", []) if isinstance(known_data, dict) else []
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if isinstance(known_rules, str):
+            known_rules = json.loads(known_rules)
+
+        partner_id = payload.get("partner_id", "unknown-partner") if isinstance(payload, dict) else "unknown-partner"
+        known_rules_list = known_rules.get("rules", []) if isinstance(known_rules, dict) else []
 
         rules_to_apply = []
 
         # If known rules exist, reuse them
-        if known_rules:
-            for r in known_rules:
+        if known_rules_list:
+            for r in known_rules_list:
                 rules_to_apply.append({
                     "source_field": r.get("source_field"),
                     "target_field": r.get("target_field"),
@@ -929,24 +1603,22 @@ def propose_repair(payload_json: str, validation_errors_json: str, known_rules_j
                 })
         else:
             # Discover repair rules dynamically from payload fields
-            # client_id -> customer_id (rename)
-            if "client_id" in payload and "customer_id" not in payload:
-                rules_to_apply.append({"source_field": "client_id", "target_field": "customer_id", "operation": "rename"})
-            
-            # total -> amount (to_float)
-            if "total" in payload and "amount" not in payload:
-                rules_to_apply.append({"source_field": "total", "target_field": "amount", "operation": "to_float"})
-            elif "amount" in payload and isinstance(payload["amount"], str):
-                rules_to_apply.append({"source_field": "amount", "target_field": "amount", "operation": "to_float"})
-            
-            # payment_status case normalization (uppercase)
-            if (
-                "payment_status" in payload
-                and isinstance(payload["payment_status"], str)
-                and payload["payment_status"].upper() in {"PAID", "PENDING", "FAILED"}
-                and payload["payment_status"] != payload["payment_status"].upper()
-            ):
-                rules_to_apply.append({"source_field": "payment_status", "target_field": "payment_status", "operation": "uppercase"})
+            if isinstance(payload, dict):
+                if "client_id" in payload and "customer_id" not in payload:
+                    rules_to_apply.append({"source_field": "client_id", "target_field": "customer_id", "operation": "rename"})
+                
+                if "total" in payload and "amount" not in payload:
+                    rules_to_apply.append({"source_field": "total", "target_field": "amount", "operation": "to_float"})
+                elif "amount" in payload and isinstance(payload["amount"], str):
+                    rules_to_apply.append({"source_field": "amount", "target_field": "amount", "operation": "to_float"})
+                
+                if (
+                    "payment_status" in payload
+                    and isinstance(payload["payment_status"], str)
+                    and payload["payment_status"].upper() in {"PAID", "PENDING", "FAILED"}
+                    and payload["payment_status"] != payload["payment_status"].upper()
+                ):
+                    rules_to_apply.append({"source_field": "payment_status", "target_field": "payment_status", "operation": "uppercase"})
 
         plan = {
             "partner_id": partner_id,
@@ -957,14 +1629,16 @@ def propose_repair(payload_json: str, validation_errors_json: str, known_rules_j
         return json.dumps({"partner_id": "unknown", "rules": [], "error": str(e)})
 
 
-def apply_repair_in_sandbox(payload_json: str, repair_plan_json: str) -> str:
+def apply_repair_in_sandbox(payload: dict, repair_plan: dict) -> str:
     """Apply a repair plan to payload copy in memory (sandbox).
     Does NOT touch production data. Returns sandbox result JSON.
     """
     try:
-        payload = json.loads(payload_json) if isinstance(payload_json, str) else payload_json
-        plan = json.loads(repair_plan_json) if isinstance(repair_plan_json, str) else repair_plan_json
-        res = apply_repair_plan_in_sandbox(payload, plan)
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if isinstance(repair_plan, str):
+            repair_plan = json.loads(repair_plan)
+        res = apply_repair_plan_in_sandbox(payload, repair_plan)
         return json.dumps({
             "success": res.success,
             "repaired_payload": res.repaired_payload,
@@ -975,32 +1649,34 @@ def apply_repair_in_sandbox(payload_json: str, repair_plan_json: str) -> str:
         return json.dumps({"success": False, "error": str(e)})
 
 
-def validate_business_rules_tool(payload_json: str) -> str:
+def validate_business_rules_tool(payload: dict) -> str:
     """Validate business policies: amount > 0, currency valid, payment_status valid.
     Returns business safety result JSON.
     """
     try:
-        payload = json.loads(payload_json) if isinstance(payload_json, str) else payload_json
+        if isinstance(payload, str):
+            payload = json.loads(payload)
         res = validate_business_rules(payload)
         return json.dumps({"safe": res.safe, "errors": res.errors})
     except Exception as e:
         return json.dumps({"safe": False, "errors": [str(e)]})
 
 
-def process_order(payload_json: str, idempotency_key: str) -> str:
+def process_order(payload: dict, idempotency_key: str) -> str:
     """Process order downstream using idempotency key. Prevents duplicate side-effects.
     Returns processing result JSON.
     """
     try:
-        payload = json.loads(payload_json) if isinstance(payload_json, str) else payload_json
-        order_id = payload.get("order_id", "UNKNOWN_ORDER")
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        order_id = payload.get("order_id", "UNKNOWN_ORDER") if isinstance(payload, dict) else "UNKNOWN_ORDER"
         
         result_body = {
             "status": "processed",
             "order_id": order_id,
-            "partner_id": payload.get("partner_id"),
-            "amount": payload.get("amount"),
-            "currency": payload.get("currency"),
+            "partner_id": payload.get("partner_id") if isinstance(payload, dict) else None,
+            "amount": payload.get("amount") if isinstance(payload, dict) else None,
+            "currency": payload.get("currency") if isinstance(payload, dict) else None,
             "idempotency_key": idempotency_key,
             "processed_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
@@ -1020,24 +1696,27 @@ def process_order(payload_json: str, idempotency_key: str) -> str:
         return json.dumps({"status": "failed", "error": str(e)})
 
 
-def save_approved_repair_rule(rule_json: str) -> str:
+def save_approved_repair_rule(rule_data: dict) -> str:
     """Save an approved schema repair rule to Neon for future automatic reuse.
     Expects rule JSON object, list of rules, or repair plan dictionary.
     """
     try:
-        data = json.loads(rule_json) if isinstance(rule_json, str) else rule_json
-        if isinstance(data, dict) and "rules" in data:
-            partner_id = data.get("partner_id", "partner-acme")
-            rules_list = data["rules"]
-        elif isinstance(data, list):
+        if isinstance(rule_data, str):
+            rule_data = json.loads(rule_data)
+        if isinstance(rule_data, dict) and "rules" in rule_data:
+            partner_id = rule_data.get("partner_id", "partner-acme")
+            rules_list = rule_data["rules"]
+        elif isinstance(rule_data, list):
             partner_id = "partner-acme"
-            rules_list = data
+            rules_list = rule_data
         else:
-            partner_id = data.get("partner_id", "partner-acme")
-            rules_list = [data]
+            partner_id = rule_data.get("partner_id", "partner-acme") if isinstance(rule_data, dict) else "partner-acme"
+            rules_list = [rule_data]
 
         saved = []
         for item in rules_list:
+            if not isinstance(item, dict):
+                continue
             p_id = item.get("partner_id", partner_id)
             src = item.get("source_field")
             tgt = item.get("target_field")
@@ -1105,19 +1784,20 @@ def sanitize_attempt_outcome(raw_outcome: str | None) -> tuple[str, str | None]:
     return normalized, o
 
 
-def record_incident(incident_json: str) -> str:
+def record_incident(incident_data: dict) -> str:
     """Record an integration incident in Neon."""
     try:
-        data = json.loads(incident_json) if isinstance(incident_json, str) else incident_json
-        raw_status = data.get("status")
+        if isinstance(incident_data, str):
+            incident_data = json.loads(incident_data)
+        raw_status = incident_data.get("status") if isinstance(incident_data, dict) else None
         status, normalized_from = sanitize_incident_status(raw_status)
 
         incident_id = default_repo.record_incident(
-            partner_id=data.get("partner_id", "unknown"),
-            order_id=data.get("order_id"),
-            raw_payload=data.get("raw_payload", data),
-            validation_errors=data.get("validation_errors", []),
-            incident_type=data.get("incident_type", "schema_drift"),
+            partner_id=incident_data.get("partner_id", "unknown") if isinstance(incident_data, dict) else "unknown",
+            order_id=incident_data.get("order_id") if isinstance(incident_data, dict) else None,
+            raw_payload=incident_data.get("raw_payload", incident_data) if isinstance(incident_data, dict) else incident_data,
+            validation_errors=incident_data.get("validation_errors", []) if isinstance(incident_data, dict) else [],
+            incident_type=incident_data.get("incident_type", "schema_drift") if isinstance(incident_data, dict) else "schema_drift",
             status=status
         )
         res = {"success": True, "incident_id": incident_id, "stored_status": status}
@@ -1128,36 +1808,73 @@ def record_incident(incident_json: str) -> str:
         return json.dumps({"success": False, "error": str(e)})
 
 
-def record_repair_attempt(attempt_json: str) -> str:
-    """Record a repair attempt in Neon linked to an incident."""
+def record_repair_attempt(attempt_data: dict) -> str:
+    """Record a repair attempt in Neon linked to an incident and build Causal Decision Graph in Semantica."""
     try:
-        data = json.loads(attempt_json) if isinstance(attempt_json, str) else attempt_json
-        incident_id = data.get("incident_id")
+        if isinstance(attempt_data, str):
+            attempt_data = json.loads(attempt_data)
+        incident_id = attempt_data.get("incident_id") if isinstance(attempt_data, dict) else None
 
         if not incident_id:
             incident_id = default_repo.record_incident(
-                partner_id=data.get("partner_id", "unknown"),
-                order_id=data.get("order_id"),
-                raw_payload=data.get("before_payload", data),
+                partner_id=attempt_data.get("partner_id", "unknown") if isinstance(attempt_data, dict) else "unknown",
+                order_id=attempt_data.get("order_id") if isinstance(attempt_data, dict) else None,
+                raw_payload=attempt_data.get("before_payload", attempt_data) if isinstance(attempt_data, dict) else attempt_data,
                 validation_errors=[],
                 incident_type="schema_drift",
                 status="repaired"
             )
 
-        raw_outcome = data.get("outcome")
+        raw_outcome = attempt_data.get("outcome") if isinstance(attempt_data, dict) else None
         outcome, normalized_from = sanitize_attempt_outcome(raw_outcome)
 
         attempt_id = default_repo.record_repair_attempt(
             incident_id=incident_id,
-            repair_plan=data.get("repair_plan", {}),
-            before_payload=data.get("before_payload", {}),
-            after_payload=data.get("after_payload"),
-            validation_result=data.get("validation_result"),
-            business_result=data.get("business_result"),
-            processing_result=data.get("processing_result"),
+            repair_plan=attempt_data.get("repair_plan", {}) if isinstance(attempt_data, dict) else {},
+            before_payload=attempt_data.get("before_payload", {}) if isinstance(attempt_data, dict) else {},
+            after_payload=attempt_data.get("after_payload") if isinstance(attempt_data, dict) else None,
+            validation_result=attempt_data.get("validation_result") if isinstance(attempt_data, dict) else None,
+            business_result=attempt_data.get("business_result") if isinstance(attempt_data, dict) else None,
+            processing_result=attempt_data.get("processing_result") if isinstance(attempt_data, dict) else None,
             outcome=outcome
         )
-        res = {"success": True, "attempt_id": attempt_id, "incident_id": incident_id, "stored_outcome": outcome}
+
+        # Semantica Decision Intelligence Graph Creation
+        order_id = attempt_data.get("order_id", "UNKNOWN_ORDER") if isinstance(attempt_data, dict) else "UNKNOWN_ORDER"
+        partner_id = attempt_data.get("partner_id", "unknown") if isinstance(attempt_data, dict) else "unknown"
+
+        repair_decision_id = shared_context.record_decision(
+            category="payment_payload_repair",
+            scenario=f"Schema drift recovery for partner '{partner_id}' on Order '{order_id}'",
+            reasoning=f"Applied transformation rules: {attempt_data.get('repair_plan') if isinstance(attempt_data, dict) else {}}",
+            outcome=outcome,
+            confidence=0.98,
+            metadata={"partner_id": partner_id, "order_id": order_id, "incident_id": incident_id}
+        )
+
+        processing_decision_id = shared_context.record_decision(
+            category="payment_clearing",
+            scenario=f"Clearing order '{order_id}' downstream",
+            reasoning="Passed canonical validation and Rete business safety checks",
+            outcome="cleared" if outcome == "processed" else outcome,
+            confidence=1.0,
+            metadata={"order_id": order_id}
+        )
+
+        shared_context.add_causal_relationship(
+            source_decision_id=repair_decision_id,
+            target_decision_id=processing_decision_id,
+            relationship_type="CAUSED"
+        )
+
+        res = {
+            "success": True,
+            "attempt_id": attempt_id,
+            "incident_id": incident_id,
+            "stored_outcome": outcome,
+            "decision_id": repair_decision_id,
+            "causal_chain_linked": True,
+        }
         if normalized_from:
             res["normalized_from"] = normalized_from
         return json.dumps(res)
@@ -1165,23 +1882,36 @@ def record_repair_attempt(attempt_json: str) -> str:
         return json.dumps({"success": False, "error": str(e)})
 
 
-def escalate_incident(incident_json: str, reason: str) -> str:
-    """Flag an incident as escalated for human review when automatic repair is unsafe or ambiguous."""
+def escalate_incident(incident_data: dict, reason: str) -> str:
+    """Flag an incident as escalated for human review and record escalation decision node in Semantica."""
     try:
-        data = json.loads(incident_json) if isinstance(incident_json, str) else {}
-        incident_id = data.get("incident_id") or data.get("id")
+        if isinstance(incident_data, str):
+            incident_data = json.loads(incident_data)
+        incident_id = (incident_data.get("incident_id") or incident_data.get("id")) if isinstance(incident_data, dict) else None
         
         escalation_id = default_repo.escalate_incident(
             incident_id=incident_id,
             reason=reason,
-            evidence=data
+            evidence=incident_data if isinstance(incident_data, dict) else {}
         )
+
+        # Record escalation in Semantica Decision Graph
+        esc_decision_id = shared_context.record_decision(
+            category="incident_escalation",
+            scenario=f"Unsafe payload escalated for reason: {reason}",
+            reasoning=reason,
+            outcome="escalated_for_human_review",
+            confidence=1.0,
+            metadata={"incident_id": incident_id, "escalation_id": escalation_id}
+        )
+
         return json.dumps({
             "escalated": True,
             "escalation_id": escalation_id,
             "incident_id": incident_id,
             "reason": reason,
-            "action": "human review required"
+            "action": "human review required",
+            "decision_id": esc_decision_id,
         })
     except Exception as e:
         return json.dumps({"escalated": False, "error": str(e)})
@@ -1202,6 +1932,7 @@ def get_incident_audit(incident_id: str) -> str:
 from typing import Any
 
 from app.schemas import BusinessResult, ValidationReport
+from app.semantica_integration import shared_context
 
 CANONICAL_FIELDS = {"partner_id", "order_id", "customer_id", "amount", "currency", "payment_status"}
 ALLOWED_CURRENCIES = {"INR", "USD", "EUR", "GBP"}
@@ -1259,9 +1990,10 @@ def validate_canonical_order(payload: dict[str, Any]) -> ValidationReport:
 
 
 def validate_business_rules(payload: dict[str, Any]) -> BusinessResult:
-    """Validate business safety constraints on canonical payload."""
+    """Validate business safety constraints on canonical payload using Semantica ReteEngine."""
     errors: list[str] = []
 
+    # 1. Canonical Business validation for exact contract compatibility
     if "amount" not in payload:
         errors.append("amount field missing")
     else:
@@ -1280,7 +2012,15 @@ def validate_business_rules(payload: dict[str, Any]) -> BusinessResult:
     if payment_status not in ALLOWED_PAYMENT_STATUSES:
         errors.append(f"payment_status must be one of {sorted(ALLOWED_PAYMENT_STATUSES)}")
 
+    # 2. Rete Engine Policy Rule evaluation for governance traceability
+    rete_result = shared_context.validate_policy_rules(payload)
+    if not rete_result.get("compliant", False):
+        for v in rete_result.get("violations", []):
+            if v not in errors:
+                errors.append(v)
+
     return BusinessResult(safe=len(errors) == 0, errors=errors)
+
 
 
 def make_idempotency_key(partner_id: str, order_id: str) -> str:

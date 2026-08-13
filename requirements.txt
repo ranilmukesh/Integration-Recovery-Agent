@@ -13,3 +13,16 @@ openai
 opentelemetry-api
 opentelemetry-sdk
 openinference-instrumentation-agno
+psycopg-pool
+semantica
+rdflib
+networkx
+loguru
+structlog
+toml
+requests
+beautifulsoup4
+chardet
+faiss-cpu
+fastembed
+gensim

@@ -9,6 +9,32 @@ from app.config import settings
 
 logger = logging.getLogger("app.db")
 _sqlite_keepalive = None
+_db_pool = None
+
+
+class PooledConnectionWrapper:
+    """Wrapper that returns connection to psycopg_pool on close()."""
+    def __init__(self, pool, conn):
+        self._pool = pool
+        self._conn = conn
+
+    def cursor(self, *args, **kwargs):
+        return self._conn.cursor(*args, **kwargs)
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
+
+    def close(self):
+        if self._pool and self._conn:
+            self._pool.putconn(self._conn)
+            self._conn = None
+            self._pool = None
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
 
 
 def is_postgres(db_url: str | None = None) -> bool:
@@ -16,11 +42,46 @@ def is_postgres(db_url: str | None = None) -> bool:
     return bool(url and url.startswith(("postgresql", "postgres")))
 
 
+def get_db_pool(db_url: str | None = None):
+    global _db_pool
+    url = db_url or settings.NEON_DB_URL
+    if is_postgres(url) and _db_pool is None:
+        clean_url = url.replace("postgresql+psycopg://", "postgresql://")
+        try:
+            import psycopg_pool
+            _db_pool = psycopg_pool.ConnectionPool(
+                clean_url,
+                min_size=1,
+                max_size=10,
+                max_idle=30,       # Drop connections if idle for 30 seconds
+                max_lifetime=300,  # Force recycle every 5 minutes maximum
+                kwargs={
+                    "row_factory": dict_row,
+                    "keepalives": 1,
+                    "keepalives_idle": 30,
+                    "keepalives_interval": 10,
+                    "keepalives_count": 5
+                }
+            )
+            logger.info("Database connection pool initialized for Neon DB (min=1, max=10, max_idle=30s).")
+        except Exception as e:
+            logger.error("Failed to initialize connection pool: %s", e)
+            _db_pool = None
+    return _db_pool
+
+
 def get_db_connection(db_url: str | None = None):
     global _sqlite_keepalive
     url = db_url or settings.NEON_DB_URL
     if is_postgres(url):
         clean_url = url.replace("postgresql+psycopg://", "postgresql://")
+        pool = get_db_pool(url)
+        if pool:
+            try:
+                conn = pool.getconn()
+                return PooledConnectionWrapper(pool, conn)
+            except Exception as e:
+                logger.warning("[POOL FALLBACK] Failed to borrow connection from pool (%s). Direct connect fallback.", e)
         try:
             return psycopg.connect(clean_url, row_factory=dict_row)
         except Exception as e:
@@ -70,3 +131,4 @@ def run_migrations(db_url: str | None = None):
             conn.close()
     except Exception as e:
         logger.warning("[Warning] DB Migration error: %s", e)
+

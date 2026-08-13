@@ -1,0 +1,23 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix semantica: <https://semantica.dev/ns#> .
+
+<d4174f49-427f-4dfc-a5bc-dfea966a9d55> a <decision> ;
+    semantica:text "Schema drift recovery for partner 'partner-acme' on Order 'ORD-2002'" ;
+    semantica:confidence 1.0 .
+
+<category_payment_payload_repair> a <category> ;
+    semantica:text "category_payment_payload_repair" ;
+    semantica:confidence 1.0 .
+
+<44144731-37cd-4b40-b98b-68affd36a377> a <decision> ;
+    semantica:text "Clearing order 'ORD-2002' downstream" ;
+    semantica:confidence 1.0 .
+
+<category_payment_clearing> a <category> ;
+    semantica:text "category_payment_clearing" ;
+    semantica:confidence 1.0 .
+
+<d4174f49-427f-4dfc-a5bc-dfea966a9d55> <belongs_to> <category_payment_payload_repair> .
+<44144731-37cd-4b40-b98b-68affd36a377> <belongs_to> <category_payment_clearing> .
+<d4174f49-427f-4dfc-a5bc-dfea966a9d55> <CAUSED> <44144731-37cd-4b40-b98b-68affd36a377> .
