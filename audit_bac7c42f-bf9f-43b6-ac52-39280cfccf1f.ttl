@@ -2,7 +2,7 @@
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix semantica: <https://semantica.dev/ns#> .
 
-<702e7ca2-1737-4cac-9b40-eedfbdc70952> a <decision> ;
+<d4174f49-427f-4dfc-a5bc-dfea966a9d55> a <decision> ;
     semantica:text "Schema drift recovery for partner 'partner-acme' on Order 'ORD-2002'" ;
     semantica:confidence 1.0 .
 
@@ -10,7 +10,7 @@
     semantica:text "category_payment_payload_repair" ;
     semantica:confidence 1.0 .
 
-<c62b145e-f5a2-4e90-99c5-f63a2eb482bc> a <decision> ;
+<44144731-37cd-4b40-b98b-68affd36a377> a <decision> ;
     semantica:text "Clearing order 'ORD-2002' downstream" ;
     semantica:confidence 1.0 .
 
@@ -18,6 +18,6 @@
     semantica:text "category_payment_clearing" ;
     semantica:confidence 1.0 .
 
-<702e7ca2-1737-4cac-9b40-eedfbdc70952> <belongs_to> <category_payment_payload_repair> .
-<c62b145e-f5a2-4e90-99c5-f63a2eb482bc> <belongs_to> <category_payment_clearing> .
-<702e7ca2-1737-4cac-9b40-eedfbdc70952> <CAUSED> <c62b145e-f5a2-4e90-99c5-f63a2eb482bc> .
+<d4174f49-427f-4dfc-a5bc-dfea966a9d55> <belongs_to> <category_payment_payload_repair> .
+<44144731-37cd-4b40-b98b-68affd36a377> <belongs_to> <category_payment_clearing> .
+<d4174f49-427f-4dfc-a5bc-dfea966a9d55> <CAUSED> <44144731-37cd-4b40-b98b-68affd36a377> .
