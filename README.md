@@ -49,6 +49,83 @@ The system intercepts partner order payloads, diagnoses schema drift, safely rep
 
 ---
 
+## System Architecture & Data Flow
+
+```mermaid
+graph TD
+    %% 1. Ingestion Layer
+    subgraph INGRESS["1. Ingestion & Validation Layer"]
+        PAYLOAD["Partner B2B Event Payload"] --> CANONICAL["Canonical Schema Validator"]
+        CANONICAL -->|"Schema Drift / Malformed"| INCIDENT["Incident Repository (integration_incidents)"]
+        CANONICAL -->|"Valid Canonical Format"| BIZ_CHECK["Business Policy Validator"]
+    end
+
+    %% 2. Multi-Agent Swarm
+    subgraph SWARM["2. Swarm Multi-Agent Orchestration Layer (Agno coordinate mode)"]
+        ORCH["Swarm Orchestrator (recovery_team)<br/>Anti-Loop Bounds: tool_call_limit=4, max_tokens=2048"]
+        
+        subgraph DIAG_AGENT["Payment Schema Diagnostic Agent"]
+            D1["load_demo_scenario"]
+            D2["query_knowledge_graph_precedents"]
+            D3["run_recovery_pipeline (Sandbox Engine)"]
+        end
+
+        subgraph COMP_AGENT["Financial Policy & Compliance Agent"]
+            C1["evaluate_rete_policy_guardrail"]
+            C2["process_and_record (Idempotent Settlement)"]
+            C3["export_compliance_audit (W3C PROV-O Export)"]
+            C4["escalate_and_audit (Human Review)"]
+        end
+
+        ORCH -->|"Phase 1: Diagnosis Request"| DIAG_AGENT
+        DIAG_AGENT -->|"Repaired Payload JSON & Incident ID"| ORCH
+        ORCH -->|"Phase 2: Compliance Handoff"| COMP_AGENT
+        COMP_AGENT -->|"Clearing Status & W3C Audit Path"| ORCH
+    end
+
+    %% 3. Semantica Governance Engine
+    subgraph GOVERNANCE["3. Semantica Decision Intelligence & Governance Engine"]
+        RETE["ReteEngine Policy Network<br/>R1: positive_amount | R2: allowed_currency | R3: allowed_status"]
+        CG["ContextGraph<br/>Graph-Native Decision Nodes & CAUSED Causal Edges"]
+        PROV["ProvenanceManager<br/>W3C PROV-O Field Transformation Lineage"]
+        RDF["RDFExporter<br/>Regulator-Ready W3C PROV-O Turtle Export Engine"]
+        VEC["VectorStore (FAISS Backend)<br/>Precedent Decision Search across Schema Drifts"]
+
+        C1 --> RETE
+        C2 --> CG
+        D3 --> PROV
+        C3 --> RDF
+        D2 --> VEC
+    end
+
+    %% 4. Persistence & Governance Layer
+    subgraph PERSISTENCE["4. Enterprise Persistence & Observability (Neon PostgreSQL)"]
+        DB_RULES[("repair_rules Registry<br/>Zero-Shot Automated Reuse & hit_count")]
+        DB_ORDERS[("processed_orders Registry<br/>Idempotency Key: KEY:partner_id:order_id")]
+        DB_INCIDENTS[("incidents & escalations Registry")]
+        AGENTOS["Agno AgentOS & OpenTelemetry Tracing"]
+
+        D3 --> DB_RULES
+        C2 --> DB_ORDERS
+        INCIDENT --> DB_INCIDENTS
+        C4 --> DB_INCIDENTS
+        SWARM --> AGENTOS
+    end
+```
+
+### Architectural Component Specifications
+
+1. **Ingress & Canonical Validation**: Intercepts partner payloads. If field name or data type mismatches occur (e.g. `client_id` instead of `customer_id`, string `total` instead of float `amount`), the event is flagged as a schema drift incident.
+2. **Swarm Multi-Agent Orchestration**: Operates in Agno `coordinate` mode. The **Swarm Orchestrator** maintains rigid state-machine protocols, delegating Phase 1 to `diagnostic-agent` and Phase 2 to `compliance-agent` with strict anti-looping bounds.
+3. **Semantica Graph Intelligence**:
+   - **ReteEngine**: Provides zero-latency deterministic pattern matching for financial compliance rules prior to transaction clearance.
+   - **ContextGraph**: Creates graph decision nodes (`payment_payload_repair`, `payment_clearing`) connected via `<CAUSED>` causal links.
+   - **W3C PROV-O Audit**: Exports complete Turtle (`.ttl`) graph audit files for financial regulatory reporting.
+4. **Idempotency & Zero-Shot Learning**: Approved schema repair rules are stored in Neon PostgreSQL. Subsequent occurrences of the same schema drift increment the rule's `hit_count` and execute zero-shot repair without re-discovering transformations.
+
+---
+
+
 ## Repository Structure
 
 ```text
