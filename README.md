@@ -9,37 +9,43 @@ app_port: 7860
 
 # Integration Recovery Agent
 
-An autonomous **Integration Recovery Agent** built with **Agno (v2.7.2)**, **Neon PostgreSQL**, **NVIDIA LLM Provider**, and **AgentOS**.
+An autonomous **B2B Payment Integration Recovery Agent** built with **Agno (v2.7.2)**, **Semantica (Graph Intelligence & Governance)**, **Neon PostgreSQL**, **NVIDIA LLM Provider (`nvidia/nemotron-3.5-lightning-30b-a3b`)**, and **AgentOS**.
 
-The system receives partner order events, detects integration failures and schema drift, safely repairs payloads in an in-memory sandbox, validates business rules, processes orders with deterministic idempotency keys, persists approved repair rules in Neon DB for automated zero-shot reuse, and escalates unsafe or ambiguous incidents for human review.
+The system intercepts partner order payloads, diagnoses schema drift, safely repairs payloads in an in-memory sandbox, evaluates deterministic Rete Engine policy rules, tracks W3C PROV-O causal lineage, processes orders with idempotency keys, persists approved repair rules in Neon DB for automated zero-shot reuse, exports regulator-ready RDF Turtle audit trails, and escalates unsafe or ambiguous incidents for human review.
 
 ---
 
-## Technical Features
+## Technical Features & Architecture
 
-1. **Deterministic Dual-Stage Validation**:
-   - **Canonical Schema Validation**: Checks incoming payloads strictly against required canonical fields (`partner_id`, `order_id`, `customer_id`, `amount`, `currency`, `payment_status`) and flags field aliases or unexpected fields.
-   - **Business Safety Validation**: Enforces hard policies (`amount > 0`, allowed currency lists, valid payment statuses).
+1. **Swarm Multi-Agent Architecture (`TeamMode.coordinate`)**:
+   - **Payment Schema Diagnostic Agent (`diagnostic-agent`)**: Intercepts malformed payloads, queries knowledge graph precedents, and runs sandbox repair.
+   - **Financial Policy & Compliance Agent (`compliance-agent`)**: Evaluates deterministic Rete policy guardrails, executes idempotent transaction clearing, and exports W3C PROV-O audit trails.
+   - **B2B Payment Recovery Team (`recovery_team`)**: Swarm Orchestrator managing multi-agent handoffs with hard delegation bounds and anti-looping guardrails (`tool_call_limit=4` on team, `tool_call_limit=3` on sub-agents, `max_tokens=2048`).
 
-2. **In-Memory Sandbox Repair**:
-   - Applies schema transformations (`rename`, `to_float`, `uppercase`) safely in memory without mutating production data or database state.
+2. **Semantica Decision Intelligence & Graph Governance**:
+   - **Graph-Native `ContextGraph`**: Tracks all autonomous decisions (repair, clearing, escalation) and builds causal governance chains (`<CAUSED>` edges).
+   - **Deterministic `ReteEngine`**: Evaluates policy rules (`R1_POSITIVE_AMOUNT`, `R2_ALLOWED_CURRENCY`, `R3_ALLOWED_STATUS`) prior to order clearing.
+   - **W3C PROV-O `ProvenanceManager` & `RDFExporter`**: Generates regulator-ready RDF Turtle (`.ttl`) compliance audit trails (e.g. `audit_ORD-2002.ttl`, `compliance_audit.ttl`).
+   - **FAISS `VectorStore`**: Queries historical precedent decisions across partner schema drift incidents.
 
-3. **Dynamic Repair Rule Learning & Reuse**:
+3. **Deterministic Dual-Stage Validation**:
+   - **Canonical Schema Validation**: Checks incoming payloads strictly against canonical fields (`partner_id`, `order_id`, `customer_id`, `amount`, `currency`, `payment_status`).
+   - **Business Policy Guardrails**: Enforces hard compliance rules (`amount > 0`, allowed ISO currencies, allowed payment statuses).
+
+4. **In-Memory Sandbox Repair**:
+   - Applies schema transformations (`rename`, `to_float`, `uppercase`) safely in memory without mutating raw payloads or production state until validated.
+
+5. **Dynamic Repair Rule Learning & Zero-Shot Reuse**:
    - Persists approved repair rules in Neon/Postgres DB with hit counts (`hit_count`).
-   - Automatically reuses learned rules on repeated partner drift to instantly repair subsequent orders without re-discovering transformations.
+   - Reuses learned rules on repeated partner drift to instantly repair subsequent orders without re-discovering transformations.
 
-4. **Idempotency & Duplicate Prevention**:
-   - Generates deterministic idempotency keys (`KEY:{partner_id}:{order_id}`) to prevent duplicate downstream order processing side-effects.
+6. **Idempotency & Duplicate Prevention**:
+   - Generates deterministic idempotency keys (`KEY:{partner_id}:{order_id}`) to prevent duplicate downstream order processing.
 
-5. **Native Tool Function Calling & Parsing Safety**:
-   - Tool signatures in `app/tools.py` accept typed native data structures (`dict`, `list`, `str`) for native LLM object parsing, eliminating nested JSON string-escaping syntax errors (`Expecting ',' delimiter`).
-
-6. **Rate-Limit Guardrails & Circuit Breakers**:
-   - Agno agent configuration includes retry backoff (`delay_between_retries=10`, `retries=1`) and system instructions to stop execution cleanly if hard API rate limits (`ResourceExhausted`) occur.
-
-7. **Agno Tracing, Memory & AgentOS Runtime**:
-   - Built with OpenTelemetry tracing and Learning Machine memory (`LearningMachine`).
-   - Exposes standard OpenAI-compatible and Agno control plane API endpoints via FastAPI.
+7. **FastAPI & AgentOS Compliance Endpoints**:
+   - `GET /api/compliance/graph`: Returns Semantica ContextGraph representation (nodes & edges) for visualization dashboards.
+   - `GET /api/compliance/export`: Generates and exports W3C PROV-O RDF Turtle compliance audit files (`compliance_audit.ttl`).
+   - `GET /api/compliance/precedents`: Queries historical precedent decisions recorded in the Knowledge Graph.
 
 ---
 
@@ -49,26 +55,28 @@ The system receives partner order events, detects integration failures and schem
 integration-recovery-agent/
 ├── app/
 │   ├── __init__.py
-│   ├── agent.py         # Agno Agent definition & instructions
-│   ├── config.py        # Environment settings & fallback configs
-│   ├── db.py            # SQLite & Neon/Postgres database driver & migrations
-│   ├── main.py          # FastAPI application & Agno AgentOS entrypoint
-│   ├── repair.py        # In-memory sandbox repair execution engine
-│   ├── repository.py    # Database repository layer (Postgres / SQLite)
-│   ├── schemas.py       # Pydantic data models & validation reports
-│   ├── tools.py         # Agent tool definitions with native dict parameter signatures
-│   └── validators.py    # Schema and business rule validation logic
+│   ├── agent.py                 # Multi-agent Swarm (Team & sub-agents) definition
+│   ├── config.py                # Environment settings & fallback configs
+│   ├── db.py                    # SQLite & Neon/Postgres database pool & migrations
+│   ├── main.py                  # FastAPI application & Agno AgentOS entrypoint + compliance endpoints
+│   ├── repair.py                # In-memory sandbox repair execution engine & Semantica lineage tracking
+│   ├── repository.py            # Database repository layer (Postgres / SQLite)
+│   ├── schemas.py               # Pydantic data models & validation reports
+│   ├── semantica_integration.py # Semantica ContextGraph, ReteEngine, Provenance & RDFExporter integration
+│   ├── tools.py                 # Agno Agent tools (recovery pipeline, process & record, escalation)
+│   └── validators.py            # Schema and business rule validation logic
 ├── migrations/
-│   └── 001_initial.sql # PostgreSQL initial database schema
+│   └── 001_initial.sql          # PostgreSQL initial database schema
 ├── scripts/
-│   ├── export_app_codebase.py # Codebase exporter script
-│   └── run_demo.py     # Standalone demo script running all 4 scenarios
+│   ├── export_app_codebase.py   # Codebase exporter script
+│   └── run_demo.py              # Standalone demo script running all 4 scenarios
 ├── tests/
-│   ├── test_agent_tools.py # Unit tests for agent tool signatures & flows
-│   ├── test_repair.py      # Unit tests for sandbox repair engine
-│   ├── test_repository.py  # Unit tests for repository layer
-│   └── test_validators.py  # Unit tests for canonical & business validators
-├── Dockerfile           # Production container definition
+│   ├── test_agent_tools.py      # Unit tests for agent tool signatures & flows
+│   ├── test_repair.py           # Unit tests for sandbox repair engine
+│   ├── test_repository.py       # Unit tests for repository layer
+│   ├── test_semantica.py        # Unit tests for Semantica ContextGraph, ReteEngine & RDF exports
+│   └── test_validators.py       # Unit tests for canonical & business validators
+├── Dockerfile                   # Production container definition
 ├── .dockerignore
 ├── .env.example
 ├── pyproject.toml
@@ -100,7 +108,7 @@ Configure the following environment variables in your local `.env` file or cloud
 | `NEON_DB_URL` | `postgresql+psycopg://postgres:postgres@localhost:5432/integration_recovery_demo` | Connection string for Neon PostgreSQL database. Falls back to in-memory SQLite if unconfigured/unreachable. |
 | `ALLOW_SQLITE_FALLBACK` | `true` | Enables automatic SQLite in-memory fallback for local development & testing. |
 | `NVIDIA_API_KEY` | `""` | NVIDIA Inference API key (`nvapi-...`). |
-| `NVIDIA_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | Model identifier for NVIDIA LLM provider. |
+| `NVIDIA_MODEL` | `nvidia/nemotron-3.5-lightning-30b-a3b` | Model identifier for NVIDIA LLM provider. |
 | `PORT` | `7860` | Server HTTP port (default: `7860` for Hugging Face Spaces compatibility). |
 | `ENVIRONMENT` | `local` | Environment mode (`local`, `production`, etc.). |
 
@@ -114,7 +122,7 @@ pip install -r requirements.txt
 ```
 
 ### 2. Run Test Suite
-Run the 21 automated unit tests across validators, repository layer, sandbox repair engine, and agent tools:
+Run the 30 automated unit tests across validators, repository layer, sandbox repair engine, agent tools, and Semantica graph governance:
 ```bash
 pytest
 ```

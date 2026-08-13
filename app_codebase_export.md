@@ -1,6 +1,6 @@
 # App Codebase Export
 
-Exported `11` Python files from `d:\artizent\plici-demo\app`.
+Exported `11` Python files from `D:\artizent\plici-demo\app`.
 
 ## `app/__init__.py`
 
@@ -52,10 +52,14 @@ learning = None
 if settings.NVIDIA_API_KEY:
     model = Nvidia(
         id=settings.NVIDIA_MODEL,
-        api_key=settings.NVIDIA_API_KEY
+        api_key=settings.NVIDIA_API_KEY,
+        max_tokens=2048,
     )
 else:
-    model = Nvidia(id="nvidia/nemotron-3.5-lightning-30b-a3b")
+    model = Nvidia(
+        id="nvidia/nemotron-3.5-lightning-30b-a3b",
+        max_tokens=2048,
+    )
 
 # Bind Semantica Shared Context to the recovery agent session using serializable state
 shared_context.bind_agent("b2b-payment-recovery")
@@ -79,6 +83,7 @@ diagnostic_agent = Agent(
     markdown=True,
     add_history_to_context=False, # Safety Guard: Prevents context inflation
     retries=0,                    # Safety Guard: Prevents infinite retry loops
+    tool_call_limit=3,            # Hard Cap: Prevents infinite tool-calling loops
     instructions=[
         "## Role and Purpose",
         "You are the Payment Schema Diagnostic Agent. Your exclusive mission is to intercept malformed B2B payloads, diagnose schema drift, and secure a sandboxed repair plan.",
@@ -114,6 +119,7 @@ compliance_agent = Agent(
     markdown=True,
     add_history_to_context=False, # Safety Guard: Prevents context inflation
     retries=0,                    # Safety Guard: Prevents infinite retry loops
+    tool_call_limit=3,            # Hard Cap: Prevents infinite tool-calling loops
     instructions=[
         "## Role and Purpose",
         "You are the Financial Policy & Compliance Agent. You act as the absolute regulatory gatekeeper. Your mission is to evaluate healed payloads against deterministic ReteEngine rules and generate W3C PROV-O audit trails.",
@@ -145,41 +151,27 @@ recovery_team = Team(
     session_state=context_session_state,
     add_history_to_context=False, # Safety Guard: Prevents context inflation
     retries=0,                    # Safety Guard: Prevents infinite retry loops
+    tool_call_limit=4,            # Hard Cap: 2 member delegations + summary
     markdown=True,
     debug_mode=False,
     instructions=[
-        "## Role and Purpose",
-        "You are the Swarm Orchestrator. You command the Diagnostic Agent and Compliance Agent. You are a strict state-machine. You do not execute tools yourself; you route data flawlessly between your agents and summarize the final outcome.",
+        "## MISSION",
+        "You are the Swarm Orchestrator. Route data flawlessly between your specialized agents and synthesize the final outcome.",
         "",
-        "## Hard Delegation Bounds",
-        "- Do NOT delegate to the same agent more than once.",
-        "- Do NOT delegate more than 2 times total (1 call to `diagnostic-agent`, 1 call to `compliance-agent`).",
-        "- After Phase 2 is complete, respond directly with the executive summary. Do NOT delegate again under any circumstances.",
+        "## RIGID SWARM PROTOCOL",
+        "1. **Diagnosis:** Delegate the user's initial request to the `diagnostic-agent`. WAIT for it to finish.",
+        "2. **Compliance Handoff:** Extract the `repaired_payload` and `incident_id` returned by the Diagnostic Agent. Delegate a NEW task to the `compliance-agent`, embedding that payload.",
+        "3. **Executive Synthesis:** Once the Compliance Agent completes, YOU MUST STOP DELEGATING. Look at the JSON data and tool responses you have already received, and write the final report yourself.",
         "",
-        "## Rigid Swarm Protocol",
-        "**Phase 1: Diagnosis**",
-        "- Delegate the user's initial request to the `diagnostic-agent`.",
-        "- WAIT for the Diagnostic Agent to finish. DO NOT delegate to the Diagnostic Agent more than once.",
+        "## STRICT CONSTRAINTS (ANTI-LOOP)",
+        "- NEVER delegate to the `diagnostic-agent` to ask for descriptions, summaries, or explanations. Read the JSON it returned and write the summary yourself.",
+        "- You have a strict limit of 2 delegations total per user request (1 to Diagnostic, 1 to Compliance).",
         "",
-        "**Phase 2: Compliance Handoff**",
-        "- Extract the `repaired_payload` and `incident_id` returned by the Diagnostic Agent.",
-        "- Explicitly delegate a NEW task to the `compliance-agent`. You MUST embed the `repaired_payload` JSON in your instructions to the Compliance Agent.",
-        "- WAIT for the Compliance Agent to finish its ReteEngine checks and Audit exports.",
-        "",
-        "**Phase 3: Executive Synthesis**",
-        "Once Phase 2 is complete, stop delegating. Generate a high-end, professional Markdown executive summary for the user using this exact structure:",
-        "",
+        "## OUTPUT FORMAT",
         "### 🛡️ Autonomous Recovery Report",
-        "**Order ID:** [ID]",
-        "**Final Status:** [✅ Processed Successfully | 🚨 Escalated for Review]",
-        "",
-        "#### 1. Diagnostic Findings",
-        "- **Detected Issue:** [Brief description of schema drift]",
-        "- **Healing Applied:** [Brief description of rules applied]",
-        "",
-        "#### 2. Compliance & Audit",
-        "- **Rete Policy Gate:** [Passed | Failed - Reason]",
-        "- **W3C PROV-O Audit:** [Export Path/Status]"
+        "**Final Status:** [Processed | Escalated]",
+        "**Diagnostic Findings:** [You write a 1 sentence summary of what was fixed based on the JSON differences]",
+        "**Compliance & Audit:** [Pass/Fail] | [Audit Export Status]"
     ],
 )
 
@@ -1500,6 +1492,34 @@ def process_and_record(repaired_payload: dict, incident_id: str = None, repair_p
                 operation=r["operation"]
             )
 
+    # Semantica Decision Intelligence Graph Creation
+    try:
+        repair_decision_id = shared_context.record_decision(
+            category="payment_payload_repair",
+            scenario=f"Schema drift recovery for partner '{partner_id}' on Order '{order_id}'",
+            reasoning=f"Applied transformation rules: {repair_plan or {}}",
+            outcome="processed",
+            confidence=0.98,
+            metadata={"partner_id": partner_id, "order_id": order_id, "incident_id": incident_id}
+        )
+
+        processing_decision_id = shared_context.record_decision(
+            category="payment_clearing",
+            scenario=f"Clearing order '{order_id}' downstream",
+            reasoning="Passed canonical validation and Rete business safety checks",
+            outcome="cleared",
+            confidence=1.0,
+            metadata={"order_id": order_id}
+        )
+
+        shared_context.add_causal_relationship(
+            source_decision_id=repair_decision_id,
+            target_decision_id=processing_decision_id,
+            relationship_type="CAUSED"
+        )
+    except Exception as e:
+        logger.warning("Failed to record Semantica decision nodes in process_and_record: %s", e)
+
     return json.dumps({"status": "SUCCESS", "was_new": was_new, "result": final_res})
 
 
@@ -1514,6 +1534,19 @@ def escalate_and_audit(incident_data: dict, reason: str) -> str:
     incident_id = incident_data.get("incident_id") if isinstance(incident_data, dict) else None
     escalation_id = default_repo.escalate_incident(incident_id=incident_id, reason=reason, evidence=incident_data if isinstance(incident_data, dict) else {})
     audit_trail = default_repo.get_incident_audit(incident_id) if incident_id else {}
+
+    # Semantica Decision Intelligence Graph Creation
+    try:
+        esc_decision_id = shared_context.record_decision(
+            category="incident_escalation",
+            scenario=f"Unsafe payload escalated for reason: {reason}",
+            reasoning=reason,
+            outcome="escalated_for_human_review",
+            confidence=1.0,
+            metadata={"incident_id": incident_id, "escalation_id": escalation_id}
+        )
+    except Exception as e:
+        logger.warning("Failed to record Semantica escalation node in escalate_and_audit: %s", e)
     
     return json.dumps({
         "escalated": True,
