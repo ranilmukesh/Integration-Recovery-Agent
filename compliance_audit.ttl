@@ -2,7 +2,7 @@
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix semantica: <https://semantica.dev/ns#> .
 
-<2489802c-d486-4b71-9bc8-03ee51953bb7> a <decision> ;
+<2ccac366-b556-4cf7-abd4-9484cd629737> a <decision> ;
     semantica:text "Unsafe payload escalated for reason: amount must be greater than zero" ;
     semantica:confidence 1.0 .
 
@@ -10,7 +10,7 @@
     semantica:text "category_incident_escalation" ;
     semantica:confidence 1.0 .
 
-<c7acd826-852e-404b-9e21-7e9f854cfc7a> a <decision> ;
+<e543a1b8-9348-4c4a-a266-b70206b6d12f> a <decision> ;
     semantica:text "Schema drift recovery for partner 'partner-acme' on Order 'ORD-TEST'" ;
     semantica:confidence 1.0 .
 
@@ -18,7 +18,7 @@
     semantica:text "category_payment_payload_repair" ;
     semantica:confidence 1.0 .
 
-<e3ff0dc2-836c-48a0-8af2-3b83e5c434e9> a <decision> ;
+<b0431b6b-64ee-4079-9b62-7b50cbc90206> a <decision> ;
     semantica:text "Clearing order 'ORD-TEST' downstream" ;
     semantica:confidence 1.0 .
 
@@ -26,23 +26,39 @@
     semantica:text "category_payment_clearing" ;
     semantica:confidence 1.0 .
 
-<d967e9cb-4427-444d-ba98-708bdb1ea9bf> a <decision> ;
+<483d4cc7-993a-4644-93d1-329b6b0d2b85> a <decision> ;
+    semantica:text "Schema drift recovery for partner 'partner-acme' on Order 'ORD-MACRO-100'" ;
+    semantica:confidence 1.0 .
+
+<15b88c9a-6fd8-45a0-9207-404e3f075ae0> a <decision> ;
+    semantica:text "Clearing order 'ORD-MACRO-100' downstream" ;
+    semantica:confidence 1.0 .
+
+<cd63491d-c8a3-4ed7-a35a-626b77a06f8d> a <decision> ;
+    semantica:text "Unsafe payload escalated for reason: Repaired payload failed business rules: ['amount must be greater than zero', 'Rule R1 Violation: amount -500.0 <= 0']" ;
+    semantica:confidence 1.0 .
+
+<8960c5a8-d5d8-4e98-8c4e-ac9ebedca854> a <decision> ;
     semantica:text "Schema drift recovery for partner 'partner-acme' on Order 'ORD-9005'" ;
     semantica:confidence 1.0 .
 
-<b094c7c2-00b3-4b37-947f-473dae9dac41> a <decision> ;
+<3ef4a710-38b6-4495-a78a-33923e40eb6c> a <decision> ;
     semantica:text "Clearing order 'ORD-9005' downstream" ;
     semantica:confidence 1.0 .
 
-<887bd2e8-c702-4e38-9686-f2ccbc6dda30> a <decision> ;
+<b9ef9a72-2cb7-4e37-a100-76b273a7c0b4> a <decision> ;
     semantica:text "Unsafe payload escalated for reason: Negative amount detected" ;
     semantica:confidence 1.0 .
 
-<2489802c-d486-4b71-9bc8-03ee51953bb7> <belongs_to> <category_incident_escalation> .
-<c7acd826-852e-404b-9e21-7e9f854cfc7a> <belongs_to> <category_payment_payload_repair> .
-<e3ff0dc2-836c-48a0-8af2-3b83e5c434e9> <belongs_to> <category_payment_clearing> .
-<c7acd826-852e-404b-9e21-7e9f854cfc7a> <CAUSED> <e3ff0dc2-836c-48a0-8af2-3b83e5c434e9> .
-<d967e9cb-4427-444d-ba98-708bdb1ea9bf> <belongs_to> <category_payment_payload_repair> .
-<b094c7c2-00b3-4b37-947f-473dae9dac41> <belongs_to> <category_payment_clearing> .
-<d967e9cb-4427-444d-ba98-708bdb1ea9bf> <CAUSED> <b094c7c2-00b3-4b37-947f-473dae9dac41> .
-<887bd2e8-c702-4e38-9686-f2ccbc6dda30> <belongs_to> <category_incident_escalation> .
+<2ccac366-b556-4cf7-abd4-9484cd629737> <belongs_to> <category_incident_escalation> .
+<e543a1b8-9348-4c4a-a266-b70206b6d12f> <belongs_to> <category_payment_payload_repair> .
+<b0431b6b-64ee-4079-9b62-7b50cbc90206> <belongs_to> <category_payment_clearing> .
+<e543a1b8-9348-4c4a-a266-b70206b6d12f> <CAUSED> <b0431b6b-64ee-4079-9b62-7b50cbc90206> .
+<483d4cc7-993a-4644-93d1-329b6b0d2b85> <belongs_to> <category_payment_payload_repair> .
+<15b88c9a-6fd8-45a0-9207-404e3f075ae0> <belongs_to> <category_payment_clearing> .
+<483d4cc7-993a-4644-93d1-329b6b0d2b85> <CAUSED> <15b88c9a-6fd8-45a0-9207-404e3f075ae0> .
+<cd63491d-c8a3-4ed7-a35a-626b77a06f8d> <belongs_to> <category_incident_escalation> .
+<8960c5a8-d5d8-4e98-8c4e-ac9ebedca854> <belongs_to> <category_payment_payload_repair> .
+<3ef4a710-38b6-4495-a78a-33923e40eb6c> <belongs_to> <category_payment_clearing> .
+<8960c5a8-d5d8-4e98-8c4e-ac9ebedca854> <CAUSED> <3ef4a710-38b6-4495-a78a-33923e40eb6c> .
+<b9ef9a72-2cb7-4e37-a100-76b273a7c0b4> <belongs_to> <category_incident_escalation> .

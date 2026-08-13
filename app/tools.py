@@ -247,6 +247,34 @@ def process_and_record(repaired_payload: dict, incident_id: str = None, repair_p
                 operation=r["operation"]
             )
 
+    # Semantica Decision Intelligence Graph Creation
+    try:
+        repair_decision_id = shared_context.record_decision(
+            category="payment_payload_repair",
+            scenario=f"Schema drift recovery for partner '{partner_id}' on Order '{order_id}'",
+            reasoning=f"Applied transformation rules: {repair_plan or {}}",
+            outcome="processed",
+            confidence=0.98,
+            metadata={"partner_id": partner_id, "order_id": order_id, "incident_id": incident_id}
+        )
+
+        processing_decision_id = shared_context.record_decision(
+            category="payment_clearing",
+            scenario=f"Clearing order '{order_id}' downstream",
+            reasoning="Passed canonical validation and Rete business safety checks",
+            outcome="cleared",
+            confidence=1.0,
+            metadata={"order_id": order_id}
+        )
+
+        shared_context.add_causal_relationship(
+            source_decision_id=repair_decision_id,
+            target_decision_id=processing_decision_id,
+            relationship_type="CAUSED"
+        )
+    except Exception as e:
+        logger.warning("Failed to record Semantica decision nodes in process_and_record: %s", e)
+
     return json.dumps({"status": "SUCCESS", "was_new": was_new, "result": final_res})
 
 
@@ -261,6 +289,19 @@ def escalate_and_audit(incident_data: dict, reason: str) -> str:
     incident_id = incident_data.get("incident_id") if isinstance(incident_data, dict) else None
     escalation_id = default_repo.escalate_incident(incident_id=incident_id, reason=reason, evidence=incident_data if isinstance(incident_data, dict) else {})
     audit_trail = default_repo.get_incident_audit(incident_id) if incident_id else {}
+
+    # Semantica Decision Intelligence Graph Creation
+    try:
+        esc_decision_id = shared_context.record_decision(
+            category="incident_escalation",
+            scenario=f"Unsafe payload escalated for reason: {reason}",
+            reasoning=reason,
+            outcome="escalated_for_human_review",
+            confidence=1.0,
+            metadata={"incident_id": incident_id, "escalation_id": escalation_id}
+        )
+    except Exception as e:
+        logger.warning("Failed to record Semantica escalation node in escalate_and_audit: %s", e)
     
     return json.dumps({
         "escalated": True,
