@@ -27,7 +27,11 @@ def validate_canonical_order(payload: dict[str, Any]) -> ValidationReport:
 
     if "amount" in payload:
         val = payload["amount"]
-        if not isinstance(val, (int, float)) or isinstance(val, bool):
+        try:
+            if isinstance(val, bool):
+                raise TypeError("boolean")
+            float(val)
+        except (ValueError, TypeError):
             errors.append({
                 "type": "invalid_type",
                 "field": "amount",
