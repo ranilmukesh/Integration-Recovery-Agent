@@ -1,5 +1,6 @@
 agno[os]
 psycopg[binary]
+psycopg2
 python-multipart
 pydantic
 pydantic-settings

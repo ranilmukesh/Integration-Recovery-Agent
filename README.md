@@ -155,6 +155,9 @@ python scripts/run_demo.py
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
 ```
+```bash
+python -m uvicorn app.main:app --host 0.0.0.0 --port 7860
+```
 
 ---
 
