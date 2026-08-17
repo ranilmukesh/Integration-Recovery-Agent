@@ -1,6 +1,6 @@
 agno[os]
 psycopg[binary]
-psycopg2
+psycopg-pool
 python-multipart
 pydantic
 pydantic-settings
@@ -14,8 +14,6 @@ openai
 opentelemetry-api
 opentelemetry-sdk
 openinference-instrumentation-agno
-psycopg-pool
-semantica
 rdflib
 networkx
 loguru
@@ -24,6 +22,8 @@ toml
 requests
 beautifulsoup4
 chardet
-faiss-cpu
 fastembed
-gensim
+numpy
+scipy
+pandas
+semantica

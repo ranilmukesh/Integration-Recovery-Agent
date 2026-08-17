@@ -45,12 +45,24 @@ def test_unexpected_fields_reported():
     assert "total" in unexpected_err["fields"]
 
 
-def test_numeric_strings_rejected_before_repair():
+def test_numeric_strings_accepted_before_repair():
     payload = {
         "partner_id": "partner-acme",
         "order_id": "ORD-1001",
         "customer_id": "C-100",
         "amount": "499.00",
+        "currency": "INR",
+        "payment_status": "PAID"
+    }
+    report = validate_canonical_order(payload)
+    assert report.valid is True
+
+def test_invalid_strings_rejected_before_repair():
+    payload = {
+        "partner_id": "partner-acme",
+        "order_id": "ORD-1001",
+        "customer_id": "C-100",
+        "amount": "invalid_string",
         "currency": "INR",
         "payment_status": "PAID"
     }

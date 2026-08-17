@@ -144,6 +144,17 @@ class Repository:
         incident_type: str,
         status: str = "detected"
     ) -> str:
+        import hashlib
+
+        def mask_sensitive_payload(payload: dict | Any) -> dict | Any:
+            if not isinstance(payload, dict):
+                return payload
+            masked = payload.copy()
+            for field in ["customer_id", "client_id"]:
+                if field in masked:
+                    masked[field] = hashlib.sha256(str(masked[field]).encode()).hexdigest()
+            return masked
+
         conn = self._get_conn()
         cur = conn.cursor()
         incident_id = str(uuid.uuid4())
@@ -154,11 +165,14 @@ class Repository:
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """
             )
+
+            safe_payload = mask_sensitive_payload(raw_payload) if isinstance(raw_payload, dict) else raw_payload
+
             cur.execute(
                 query,
                 (
                     incident_id, partner_id, order_id,
-                    self._json(raw_payload), self._json(validation_errors),
+                    self._json(safe_payload), self._json(validation_errors),
                     incident_type, status
                 )
             )

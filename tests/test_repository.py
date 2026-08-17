@@ -53,7 +53,7 @@ def test_repository_incident_recording_and_escalation(test_repo):
     incident_id = test_repo.record_incident(
         partner_id="partner-acme",
         order_id="ORD-1009",
-        raw_payload={"amount": -500.0},
+        raw_payload={"amount": -500.0, "customer_id": "C-123", "client_id": "CL-456"},
         validation_errors=[{"type": "negative_amount"}],
         incident_type="business_policy_violation"
     )
@@ -70,3 +70,7 @@ def test_repository_incident_recording_and_escalation(test_repo):
     assert audit["incident"]["status"] == "escalated"
     assert len(audit["escalations"]) == 1
     assert audit["escalations"][0]["reason"] == "amount must be greater than zero"
+    import hashlib
+    raw = audit["incident"]["raw_payload"]
+    assert raw["customer_id"] == hashlib.sha256("C-123".encode()).hexdigest()
+    assert raw["client_id"] == hashlib.sha256("CL-456".encode()).hexdigest()
