@@ -2,7 +2,7 @@
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix semantica: <https://semantica.dev/ns#> .
 
-<156d2da7-ed15-46e3-9720-71771d8f7c1e> a <decision> ;
+<ed695515-50d1-48b7-9b7d-8e65998a753f> a <decision> ;
     semantica:text "Unsafe payload escalated for reason: amount must be greater than zero" ;
     semantica:confidence 1.0 .
 
@@ -10,7 +10,7 @@
     semantica:text "category_incident_escalation" ;
     semantica:confidence 1.0 .
 
-<3f04b36b-7fe5-4b73-963f-03954c4c90c2> a <decision> ;
+<6d53aa9a-b0ea-4257-848f-4b98f405c09a> a <decision> ;
     semantica:text "Schema drift recovery for partner 'partner-acme' on Order 'ORD-TEST'" ;
     semantica:confidence 1.0 .
 
@@ -18,7 +18,7 @@
     semantica:text "category_payment_payload_repair" ;
     semantica:confidence 1.0 .
 
-<5934ec49-0bac-4811-92c3-79338d97c487> a <decision> ;
+<d19e6474-38cf-4784-8325-0338de72cca9> a <decision> ;
     semantica:text "Clearing order 'ORD-TEST' downstream" ;
     semantica:confidence 1.0 .
 
@@ -26,39 +26,39 @@
     semantica:text "category_payment_clearing" ;
     semantica:confidence 1.0 .
 
-<ffeb84d4-e4f3-4e5f-b8c7-cdded1ec47ba> a <decision> ;
+<b76523ea-459c-4e75-b979-fb842970b5f7> a <decision> ;
     semantica:text "Schema drift recovery for partner 'partner-acme' on Order 'ORD-MACRO-100'" ;
     semantica:confidence 1.0 .
 
-<318f3ba2-3075-4aab-8c24-ee41c244e4c4> a <decision> ;
+<ace35cb9-aa8f-4bd8-a22a-413217b9f96c> a <decision> ;
     semantica:text "Clearing order 'ORD-MACRO-100' downstream" ;
     semantica:confidence 1.0 .
 
-<84206d84-1ec9-425e-8cbd-585f76729d42> a <decision> ;
+<859c7340-1345-4733-ba6f-6dff4ba8f480> a <decision> ;
     semantica:text "Unsafe payload escalated for reason: Repaired payload failed business rules: ['amount must be greater than zero', 'Rule R1 Violation: amount -500.0 <= 0']" ;
     semantica:confidence 1.0 .
 
-<6a8551c8-1351-48d7-9fd0-3c2efd46476f> a <decision> ;
+<ccc7fe9f-d52c-48a5-af96-572e8c1496b4> a <decision> ;
     semantica:text "Schema drift recovery for partner 'partner-acme' on Order 'ORD-9005'" ;
     semantica:confidence 1.0 .
 
-<9cdc9d22-821b-4e4f-918f-9221269b96df> a <decision> ;
+<4b993d74-0c74-4fbd-a619-7e9c55449cbc> a <decision> ;
     semantica:text "Clearing order 'ORD-9005' downstream" ;
     semantica:confidence 1.0 .
 
-<b54e7878-c409-4e9e-b44d-b1066d5f2332> a <decision> ;
+<cbdd9158-7f0f-4605-affd-ad53d43f13e9> a <decision> ;
     semantica:text "Unsafe payload escalated for reason: Negative amount detected" ;
     semantica:confidence 1.0 .
 
-<156d2da7-ed15-46e3-9720-71771d8f7c1e> <belongs_to> <category_incident_escalation> .
-<3f04b36b-7fe5-4b73-963f-03954c4c90c2> <belongs_to> <category_payment_payload_repair> .
-<5934ec49-0bac-4811-92c3-79338d97c487> <belongs_to> <category_payment_clearing> .
-<3f04b36b-7fe5-4b73-963f-03954c4c90c2> <CAUSED> <5934ec49-0bac-4811-92c3-79338d97c487> .
-<ffeb84d4-e4f3-4e5f-b8c7-cdded1ec47ba> <belongs_to> <category_payment_payload_repair> .
-<318f3ba2-3075-4aab-8c24-ee41c244e4c4> <belongs_to> <category_payment_clearing> .
-<ffeb84d4-e4f3-4e5f-b8c7-cdded1ec47ba> <CAUSED> <318f3ba2-3075-4aab-8c24-ee41c244e4c4> .
-<84206d84-1ec9-425e-8cbd-585f76729d42> <belongs_to> <category_incident_escalation> .
-<6a8551c8-1351-48d7-9fd0-3c2efd46476f> <belongs_to> <category_payment_payload_repair> .
-<9cdc9d22-821b-4e4f-918f-9221269b96df> <belongs_to> <category_payment_clearing> .
-<6a8551c8-1351-48d7-9fd0-3c2efd46476f> <CAUSED> <9cdc9d22-821b-4e4f-918f-9221269b96df> .
-<b54e7878-c409-4e9e-b44d-b1066d5f2332> <belongs_to> <category_incident_escalation> .
+<ed695515-50d1-48b7-9b7d-8e65998a753f> <belongs_to> <category_incident_escalation> .
+<6d53aa9a-b0ea-4257-848f-4b98f405c09a> <belongs_to> <category_payment_payload_repair> .
+<d19e6474-38cf-4784-8325-0338de72cca9> <belongs_to> <category_payment_clearing> .
+<6d53aa9a-b0ea-4257-848f-4b98f405c09a> <CAUSED> <d19e6474-38cf-4784-8325-0338de72cca9> .
+<b76523ea-459c-4e75-b979-fb842970b5f7> <belongs_to> <category_payment_payload_repair> .
+<ace35cb9-aa8f-4bd8-a22a-413217b9f96c> <belongs_to> <category_payment_clearing> .
+<b76523ea-459c-4e75-b979-fb842970b5f7> <CAUSED> <ace35cb9-aa8f-4bd8-a22a-413217b9f96c> .
+<859c7340-1345-4733-ba6f-6dff4ba8f480> <belongs_to> <category_incident_escalation> .
+<ccc7fe9f-d52c-48a5-af96-572e8c1496b4> <belongs_to> <category_payment_payload_repair> .
+<4b993d74-0c74-4fbd-a619-7e9c55449cbc> <belongs_to> <category_payment_clearing> .
+<ccc7fe9f-d52c-48a5-af96-572e8c1496b4> <CAUSED> <4b993d74-0c74-4fbd-a619-7e9c55449cbc> .
+<cbdd9158-7f0f-4605-affd-ad53d43f13e9> <belongs_to> <category_incident_escalation> .

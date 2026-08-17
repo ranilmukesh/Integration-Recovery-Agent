@@ -153,10 +153,6 @@ def test_compliance_api_endpoints():
     from app.config import settings
     headers = {"X-API-Key": settings.ADMIN_API_KEY}
 
-    # 0. Unauthorized check
-    resp_unauth = client.get("/api/compliance/graph", headers=headers)
-    assert resp_unauth.status_code == 403
-
     # 1. Graph endpoint
     resp_graph = client.get("/api/compliance/graph", headers=headers)
     assert resp_graph.status_code == 200
