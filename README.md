@@ -26,7 +26,7 @@ The system intercepts partner order payloads, diagnoses schema drift, safely rep
    - **Graph-Native `ContextGraph`**: Tracks all autonomous decisions (repair, clearing, escalation) and builds causal governance chains (`<CAUSED>` edges).
    - **Deterministic `ReteEngine`**: Evaluates policy rules (`R1_POSITIVE_AMOUNT`, `R2_ALLOWED_CURRENCY`, `R3_ALLOWED_STATUS`) prior to order clearing.
    - **W3C PROV-O `ProvenanceManager` & `RDFExporter`**: Generates regulator-ready RDF Turtle (`.ttl`) compliance audit trails (e.g. `audit_ORD-2002.ttl`, `compliance_audit.ttl`).
-   - **FAISS `VectorStore`**: Queries historical precedent decisions across partner schema drift incidents.
+   - **Vector Store & FastEmbed ONNX**: Queries historical precedent decisions across partner schema drift incidents using embedded vectors.
 
 3. **Deterministic Dual-Stage Validation**:
    - **Canonical Schema Validation**: Checks incoming payloads strictly against canonical fields (`partner_id`, `order_id`, `customer_id`, `amount`, `currency`, `payment_status`).
@@ -139,10 +139,17 @@ Configure the following environment variables in your local `.env` file or cloud
 pip install -r requirements.txt
 ```
 
+> **Note on Windows / Python 3.14+**:
+> To avoid local C-extension compilation issues with optional packages (such as `gensim`), install `semantica` with `--no-deps` followed by the core requirement dependencies:
+> ```bash
+> pip install semantica --no-deps
+> pip install -r requirements.txt
+> ```
+
 ### 2. Run Test Suite
-Run the 30 automated unit tests across validators, repository layer, sandbox repair engine, agent tools, and Semantica graph governance:
+Run the 31 automated unit tests across validators, repository layer, sandbox repair engine, agent tools, and Semantica graph governance:
 ```bash
-pytest
+python -m pytest
 ```
 
 ### 3. Run Standalone Demonstration Scenarios
@@ -153,8 +160,15 @@ python scripts/run_demo.py
 
 ### 4. Start Local Server (FastAPI / AgentOS)
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
 ```
+
+Once running, access:
+- **Interactive Swagger Docs**: [http://localhost:7860/docs](http://localhost:7860/docs)
+- **OpenAPI Schema**: [http://localhost:7860/openapi.json](http://localhost:7860/openapi.json)
+- **Semantica Graph API**: `GET http://localhost:7860/api/compliance/graph`
+- **W3C PROV-O Export**: `GET http://localhost:7860/api/compliance/export`
+- **Precedent Decisions Query**: `GET http://localhost:7860/api/compliance/precedents?scenario=drift`
 
 ---
 
