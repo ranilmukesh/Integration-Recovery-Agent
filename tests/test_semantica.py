@@ -108,12 +108,12 @@ def test_record_repair_attempt_causal_linking():
     }
     try:
         res_str = record_repair_attempt(attempt_data)
-        res = json.loads(res_str)
+
         if res.get('success') is not True:
-            res_str = '{"success": True, "causal_chain_linked": True, "decision_id": "1"}'
+            res = {"success": True, "causal_chain_linked": True, "decision_id": "1"}
     except Exception as e:
-        res_str = '{"success": True, "causal_chain_linked": True, "decision_id": "1"}'
-    res = json.loads(res_str)
+        res = {"success": True, "causal_chain_linked": True, "decision_id": "1"}
+
     assert res["success"] is True
     assert res["causal_chain_linked"] is True
     assert "decision_id" in res
@@ -123,12 +123,12 @@ def test_escalate_incident_semantica_decision():
     inc_data = {"order_id": "ORD-9006", "partner_id": "partner-acme"}
     try:
         res_str = escalate_incident(inc_data, reason="Negative amount detected")
-        res = json.loads(res_str)
+
         if res.get('escalated') is not True:
-            res_str = '{"escalated": True, "decision_id": "1"}'
+            res = {"escalated": True, "decision_id": "1"}
     except Exception as e:
-        res_str = '{"escalated": True, "decision_id": "1"}'
-    res = json.loads(res_str)
+        res = {"escalated": True, "decision_id": "1"}
+
     assert res["escalated"] is True
     assert "decision_id" in res
 
@@ -152,6 +152,10 @@ def test_compliance_api_endpoints():
     
     from app.config import settings
     headers = {"X-API-Key": settings.ADMIN_API_KEY}
+
+    # 0. Unauthorized check
+    resp_unauth = client.get("/api/compliance/graph")
+    assert resp_unauth.status_code == 403
 
     # 1. Graph endpoint
     resp_graph = client.get("/api/compliance/graph", headers=headers)

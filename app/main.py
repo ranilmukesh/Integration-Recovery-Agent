@@ -2,9 +2,13 @@ import os
 from contextlib import asynccontextmanager
 
 import uvicorn
+from pathlib import Path
+
 from agno.os import AgentOS
-from fastapi import FastAPI, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.security import APIKeyHeader
 
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -41,10 +45,16 @@ _patch_model_status(RunOutput)
 base_app = FastAPI(title="B2B Payment Recovery API")
 
 
-@base_app.get("/api/compliance/graph")
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+def verify_auth(api_key: str = Depends(api_key_header)):
+    if not api_key or api_key != settings.ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+@base_app.get("/api/compliance/graph", dependencies=[Depends(verify_auth)])
 async def get_semantica_knowledge_graph():
     """Retrieve full Semantica Knowledge Graph representation for visual explorer dashboards."""
-    graph_dict = shared_context.kg.to_dict()
+    graph_dict = await run_in_threadpool(shared_context.kg.to_dict)
     return JSONResponse(content={
         "status": "success",
         "nodes_count": len(graph_dict.get("nodes", [])),
@@ -53,23 +63,25 @@ async def get_semantica_knowledge_graph():
     })
 
 
-@base_app.get("/api/compliance/export")
-async def export_prov_o_compliance_report(output_filename: str = "compliance_audit.ttl"):
+@base_app.get("/api/compliance/export", dependencies=[Depends(verify_auth)])
+async def export_prov_o_compliance_report():
     """Export W3C PROV-O RDF Turtle file for financial auditors."""
-    res = shared_context.export_compliance_report(output_path=output_filename, format="turtle")
-    if res.get("success") and os.path.exists(output_filename):
+    output_filename = "compliance_audit.ttl"
+    secure_path = Path("/tmp") / output_filename
+    res = await run_in_threadpool(shared_context.export_compliance_report, str(secure_path), "turtle")
+    if res.get("success") and secure_path.exists():
         return FileResponse(
-            path=output_filename,
+            path=str(secure_path),
             media_type="text/turtle",
             filename=output_filename
         )
     return JSONResponse(status_code=500, content=res)
 
 
-@base_app.get("/api/compliance/precedents")
+@base_app.get("/api/compliance/precedents", dependencies=[Depends(verify_auth)])
 async def get_schema_drift_precedents(scenario: str = Query(..., description="Partner schema drift scenario")):
     """Query precedent decisions recorded in the Semantica Knowledge Graph."""
-    precedents = shared_context.find_precedents(scenario)
+    precedents = await run_in_threadpool(shared_context.find_precedents, scenario)
     return JSONResponse(content={
         "scenario": scenario,
         "count": len(precedents),

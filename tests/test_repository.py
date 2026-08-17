@@ -74,3 +74,7 @@ def test_repository_incident_recording_and_escalation(test_repo):
     raw = audit["incident"]["raw_payload"]
     assert raw["customer_id"] == hashlib.sha256("C-123".encode()).hexdigest()
     assert raw["client_id"] == hashlib.sha256("CL-456".encode()).hexdigest()
+    import hashlib
+    raw = audit["incident"]["raw_payload"]
+    assert raw["customer_id"] == hashlib.sha256("C-123".encode()).hexdigest()
+    assert raw["client_id"] == hashlib.sha256("CL-456".encode()).hexdigest()
