@@ -1,6 +1,6 @@
 # App Codebase Export
 
-Exported `11` Python files from `D:\artizent\plici-demo\app`.
+Exported `11` Python files from `d:\artizent\plici-demo\app`.
 
 ## `app/__init__.py`
 
@@ -191,7 +191,7 @@ load_dotenv()
 
 class Settings:
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "local")
-    ALLOW_SQLITE_FALLBACK: bool = os.getenv("ALLOW_SQLITE_FALLBACK", "true").lower() in ("true", "1", "yes")
+    ALLOW_SQLITE_FALLBACK: bool = os.getenv("ALLOW_SQLITE_FALLBACK", "false").lower() in ("true", "1", "yes")
     NEON_DB_URL: str = os.getenv(
         "NEON_DB_URL",
         "postgresql+psycopg://postgres:postgres@localhost:5432/integration_recovery_demo"
@@ -199,6 +199,7 @@ class Settings:
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
     NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
     PORT: int = int(os.getenv("PORT", "7860"))
+    ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "fallback-secret")
 
 
 settings = Settings()
@@ -708,6 +709,17 @@ class Repository:
         incident_type: str,
         status: str = "detected"
     ) -> str:
+        import hashlib
+
+        def mask_sensitive_payload(payload: dict | Any) -> dict | Any:
+            if not isinstance(payload, dict):
+                return payload
+            masked = payload.copy()
+            for field in ["customer_id", "client_id"]:
+                if field in masked:
+                    masked[field] = hashlib.sha256(str(masked[field]).encode()).hexdigest()
+            return masked
+
         conn = self._get_conn()
         cur = conn.cursor()
         incident_id = str(uuid.uuid4())
@@ -718,11 +730,14 @@ class Repository:
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """
             )
+
+            safe_payload = mask_sensitive_payload(raw_payload) if isinstance(raw_payload, dict) else raw_payload
+
             cur.execute(
                 query,
                 (
                     incident_id, partner_id, order_id,
-                    self._json(raw_payload), self._json(validation_errors),
+                    self._json(safe_payload), self._json(validation_errors),
                     incident_type, status
                 )
             )
@@ -1257,6 +1272,18 @@ from app.semantica_integration import (
 )
 from app.validators import validate_business_rules, validate_canonical_order
 
+
+def ensure_dict(data):
+    if isinstance(data, dict):
+        return data
+    try:
+        return json.loads(data)
+    except Exception as e:
+        logger.error(f"Failed to parse agent JSON output: {e}")
+        return {}
+
+import logging
+logger = logging.getLogger('app.tools')
 default_repo = Repository()
 
 DEMO_SCENARIOS = {
@@ -1344,11 +1371,7 @@ def run_recovery_pipeline(payload: dict) -> str:
     """Validates, diagnoses, looks up rules, and tests repairs in a sandbox.
     Returns whether the payload is ready to process or needs escalation.
     """
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except Exception:
-            pass
+    payload = ensure_dict(payload)
 
     partner_id = payload.get("partner_id", "unknown") if isinstance(payload, dict) else "unknown"
     order_id = payload.get("order_id") if isinstance(payload, dict) else None
@@ -1430,16 +1453,8 @@ def run_recovery_pipeline(payload: dict) -> str:
 @tool
 def process_and_record(repaired_payload: dict, incident_id: str = None, repair_plan: dict = None, save_new_rules: bool = False) -> str:
     """Processes order downstream, records repair attempt, and saves approved rules."""
-    if isinstance(repaired_payload, str):
-        try:
-            repaired_payload = json.loads(repaired_payload)
-        except Exception:
-            pass
-    if isinstance(repair_plan, str):
-        try:
-            repair_plan = json.loads(repair_plan)
-        except Exception:
-            pass
+    repaired_payload = ensure_dict(repaired_payload)
+    repair_plan = ensure_dict(repair_plan)
 
     order_id = repaired_payload.get("order_id", "UNKNOWN_ORDER") if isinstance(repaired_payload, dict) else "UNKNOWN_ORDER"
     partner_id = repaired_payload.get("partner_id", "unknown") if isinstance(repaired_payload, dict) else "unknown"
@@ -1526,11 +1541,7 @@ def process_and_record(repaired_payload: dict, incident_id: str = None, repair_p
 @tool
 def escalate_and_audit(incident_data: dict, reason: str) -> str:
     """Escalates unsafe/failed incidents for human review and retrieves audit trail."""
-    if isinstance(incident_data, str):
-        try:
-            incident_data = json.loads(incident_data)
-        except Exception:
-            pass
+    incident_data = ensure_dict(incident_data)
     incident_id = incident_data.get("incident_id") if isinstance(incident_data, dict) else None
     escalation_id = default_repo.escalate_incident(incident_id=incident_id, reason=reason, evidence=incident_data if isinstance(incident_data, dict) else {})
     audit_trail = default_repo.get_incident_audit(incident_id) if incident_id else {}
@@ -1561,8 +1572,7 @@ def validate_order_payload(payload: dict) -> str:
     Returns structured JSON with 'valid' boolean and 'errors' array.
     """
     try:
-        if isinstance(payload, str):
-            payload = json.loads(payload)
+        payload = ensure_dict(payload)
         report = validate_canonical_order(payload)
         return json.dumps({"valid": report.valid, "errors": report.errors})
     except Exception as e:
@@ -1583,10 +1593,8 @@ def propose_repair(payload: dict, validation_errors: list = None, known_rules: d
     Returns repair plan JSON.
     """
     try:
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        if isinstance(known_rules, str):
-            known_rules = json.loads(known_rules)
+        payload = ensure_dict(payload)
+        known_rules = ensure_dict(known_rules)
 
         partner_id = payload.get("partner_id", "unknown-partner") if isinstance(payload, dict) else "unknown-partner"
         known_rules_list = known_rules.get("rules", []) if isinstance(known_rules, dict) else []
@@ -1634,10 +1642,8 @@ def apply_repair_in_sandbox(payload: dict, repair_plan: dict) -> str:
     Does NOT touch production data. Returns sandbox result JSON.
     """
     try:
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        if isinstance(repair_plan, str):
-            repair_plan = json.loads(repair_plan)
+        payload = ensure_dict(payload)
+        repair_plan = ensure_dict(repair_plan)
         res = apply_repair_plan_in_sandbox(payload, repair_plan)
         return json.dumps({
             "success": res.success,
@@ -1654,8 +1660,7 @@ def validate_business_rules_tool(payload: dict) -> str:
     Returns business safety result JSON.
     """
     try:
-        if isinstance(payload, str):
-            payload = json.loads(payload)
+        payload = ensure_dict(payload)
         res = validate_business_rules(payload)
         return json.dumps({"safe": res.safe, "errors": res.errors})
     except Exception as e:
@@ -1667,8 +1672,7 @@ def process_order(payload: dict, idempotency_key: str) -> str:
     Returns processing result JSON.
     """
     try:
-        if isinstance(payload, str):
-            payload = json.loads(payload)
+        payload = ensure_dict(payload)
         order_id = payload.get("order_id", "UNKNOWN_ORDER") if isinstance(payload, dict) else "UNKNOWN_ORDER"
         
         result_body = {
@@ -1701,8 +1705,7 @@ def save_approved_repair_rule(rule_data: dict) -> str:
     Expects rule JSON object, list of rules, or repair plan dictionary.
     """
     try:
-        if isinstance(rule_data, str):
-            rule_data = json.loads(rule_data)
+        rule_data = ensure_dict(rule_data)
         if isinstance(rule_data, dict) and "rules" in rule_data:
             partner_id = rule_data.get("partner_id", "partner-acme")
             rules_list = rule_data["rules"]
@@ -1787,8 +1790,7 @@ def sanitize_attempt_outcome(raw_outcome: str | None) -> tuple[str, str | None]:
 def record_incident(incident_data: dict) -> str:
     """Record an integration incident in Neon."""
     try:
-        if isinstance(incident_data, str):
-            incident_data = json.loads(incident_data)
+        incident_data = ensure_dict(incident_data)
         raw_status = incident_data.get("status") if isinstance(incident_data, dict) else None
         status, normalized_from = sanitize_incident_status(raw_status)
 
@@ -1811,8 +1813,7 @@ def record_incident(incident_data: dict) -> str:
 def record_repair_attempt(attempt_data: dict) -> str:
     """Record a repair attempt in Neon linked to an incident and build Causal Decision Graph in Semantica."""
     try:
-        if isinstance(attempt_data, str):
-            attempt_data = json.loads(attempt_data)
+        attempt_data = ensure_dict(attempt_data)
         incident_id = attempt_data.get("incident_id") if isinstance(attempt_data, dict) else None
 
         if not incident_id:
@@ -1885,8 +1886,7 @@ def record_repair_attempt(attempt_data: dict) -> str:
 def escalate_incident(incident_data: dict, reason: str) -> str:
     """Flag an incident as escalated for human review and record escalation decision node in Semantica."""
     try:
-        if isinstance(incident_data, str):
-            incident_data = json.loads(incident_data)
+        incident_data = ensure_dict(incident_data)
         incident_id = (incident_data.get("incident_id") or incident_data.get("id")) if isinstance(incident_data, dict) else None
         
         escalation_id = default_repo.escalate_incident(
@@ -1958,7 +1958,11 @@ def validate_canonical_order(payload: dict[str, Any]) -> ValidationReport:
 
     if "amount" in payload:
         val = payload["amount"]
-        if not isinstance(val, (int, float)) or isinstance(val, bool):
+        try:
+            if isinstance(val, bool):
+                raise TypeError("boolean")
+            float(val)
+        except (ValueError, TypeError):
             errors.append({
                 "type": "invalid_type",
                 "field": "amount",
